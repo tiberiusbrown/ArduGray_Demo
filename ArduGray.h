@@ -527,8 +527,7 @@ template<class BASE> struct ArduGray_Common : public BASE
         needs_display = false;
         doDisplay();
 #if ARDUGRAY_SYNC == ARDUGRAY_THREE_PHASE
-        if(current_phase == 3)
-            return true;
+        return current_phase == 3;
 #else
         return true;
 #endif
