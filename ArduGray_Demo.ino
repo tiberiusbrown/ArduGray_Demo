@@ -1,7 +1,7 @@
 #define ARDUGRAY_IMPLEMENTATION
 #include "ArduGray.h"
 
-Arduboy2_Gray a;
+ArduGray a;
 
 int16_t x, y;
 
