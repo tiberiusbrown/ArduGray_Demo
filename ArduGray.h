@@ -21,7 +21,7 @@ Options:
             both refresh rate due to extra rows drive and image stability due
             to tighter timing windows, but allows a framebuffer height of 64.
                         
-    ARDUGRAY_SYNC
+    ARDUGRAY_HZ
         Target display refresh rate. Usually best left at the default value.
                     
     ARDUGRAY_UPDATE_EVERY_N
