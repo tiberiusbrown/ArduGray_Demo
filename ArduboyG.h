@@ -1,39 +1,32 @@
 /*
 
-Options:
+Optional Configuration Macros (define before including ArduboyG.h):
 
-    ARDUGRAY_MODE
-        Plane mode. Allowed values are:
-        - ARDUGRAY_L4_CONTRAST
-            4 levels in 2 frames using contrast.
-        - ARDUGRAY_L4_TRIPLANE
-            4 levels in 3 frames. Visible strobing from decreased image rate.
-        - ARDUGRAY_L3
-            3 levels in 2 frames. Best image quality.
+    Frame sync method. Choices are one of:
+    - ABG_SYNC_THREE_PHASE (default)
+        Loop around an additional 8 rows to cover the park row. Reduces
+        both refresh rate due to extra rows drive and image stability due
+        to tighter timing windows, but allows a framebuffer height of 64.
+    - ABG_SYNC_PARK_ROW
+        Sacrifice the bottom row as the parking row. Improves image
+        stability and refresh rate, but usable framebuffer height is 63.
 
-    ARDUGRAY_SYNC    
-        Frame sync method. Allowed values are:
-        - ARDUGRAY_PARK_ROW
-            Sacrifice the bottom row as the parking row. Improves image
-            stability and refresh rate, but usable framebuffer height is 63.
-        - ARDUGRAY_THREE_PHASE
-            Loop around an additional 8 rows to cover the park row. Reduces
-            both refresh rate due to extra rows drive and image stability due
-            to tighter timing windows, but allows a framebuffer height of 64.
-                        
-    ARDUGRAY_HZ
-        Target display refresh rate. Usually best left at the default value.
+Default Template Configuration:
+    
+    ArduboyGBase a;
+    ArduboyG     a;
+
+Custom Template Configuration:
+
+    ArduboyGBase_Config<ABG_Mode::L3, ABG_Flags:None> a;
+    ArduboyG_Config    <ABG_Mode::L3, ABG_Flags:None> a;
                     
-    ARDUGRAY_UPDATE_EVERY_N
-        Determines how many image cycles between game logic updates, as
-        indicated by Ardugray::needsUpdate.
-
 Example Usage:
 
-    #define ARDUGRAY_IMPLEMENTATION
-    #include "ArduGray.h"
+    #define ABG_IMPLEMENTATION
+    #include "ArduboyG.h"
 
-    ArduGray a;
+    ArduboyG a;
 
     int16_t x, y;
 
@@ -52,7 +45,7 @@ Example Usage:
         a.setTextColor(WHITE);
         a.print(F("Hello "));
         a.setTextColor(DARK_GRAY);
-        a.print(F("ArduGray!"));
+        a.print(F("ArduboyG!"));
         
         a.fillRect(x +  0, y, 5, 15, WHITE);
         a.fillRect(x +  5, y, 5, 15, LIGHT_GRAY);
@@ -80,151 +73,126 @@ Example Usage:
 
 #include <Arduboy2.h>
 
-#define ARDUGRAY_MODE_L4_CONTRAST 0
-#define ARDUGRAY_MODE_L4_TRIPLANE 1
-#define ARDUGRAY_MODE_L3          2
-
-#define ARDUGRAY_PARK_ROW    0
-#define ARDUGRAY_THREE_PHASE 1
-
-#ifndef ARDUGRAY_MODE
-#define ARDUGRAY_MODE ARDUGRAY_MODE_L4_CONTRAST
+#if !defined(ABG_SYNC_THREE_PHASE) && !defined(ABG_SYNC_PARK_ROW)
+#define ABG_SYNC_THREE_PHASE
+#endif
+#ifdef ABG_SYNC_THREE_PHASE
+#undef ABG_SYNC_PARK_ROW
+#endif
+#ifdef ABG_SYNC_PARK_ROW
+#undef ABG_SYNC_THREE_PHASE
 #endif
 
-#ifndef ARDUGRAY_SYNC
-#define ARDUGRAY_SYNC ARDUGRAY_THREE_PHASE
-#endif
-
-#ifndef ARDUGRAY_HZ
-#define ARDUGRAY_HZ 135
-#endif
-
-#ifndef ARDUGRAY_UPDATE_EVERY_N
-#define ARDUGRAY_UPDATE_EVERY_N 1
+#ifndef ABG_REFRESH_HZ
+#define ABG_REFRESH_HZ 135
 #endif
 
 #undef BLACK
 #undef WHITE
+static constexpr uint8_t BLACK      = 0;
+static constexpr uint8_t DARK_GRAY  = 1;
+static constexpr uint8_t DARK_GREY  = 1;
+static constexpr uint8_t GRAY       = 1;
+static constexpr uint8_t GREY       = 1;
+static constexpr uint8_t LIGHT_GRAY = 2;
+static constexpr uint8_t LIGHT_GREY = 2;
+static constexpr uint8_t WHITE      = 3;
+    
+enum class ABG_Mode : uint8_t
+{
+    L4_Contrast,
+    L4_Triplane,
+    L3,
+    
+    Default = L4_Contrast,
+};
 
-#define BLACK      0
-#define DARK_GRAY  1
-#define GRAY       1
-#define LIGHT_GRAY 2
-#define WHITE      3
-
-#if ARDUGRAY_MODE < 0 || ARDUGRAY_MODE > 2
-#error "ARDUGRAY_MODE must be 0, 1, or 2"
-#endif
-
-#if ARDUGRAY_UPDATE_EVERY_N < 1
-#error "ARDUGRAY_UPDATE_EVERY_N must be greater than 0"
-#endif
+struct ABG_Flags
+{
+    enum
+    {
+        None = 0,
+        OptimizeFillRect = (1 << 0),
+        
+        Default = OptimizeFillRect,
+    };
+};
 
 #ifdef __GNUC__
-#define ARDUGRAY_NOT_SUPPORTED \
-    __attribute__((error( \
-    "This method cannot be called when using ArduGray." \
-    )))
+#define ABG_NOT_SUPPORTED __attribute__((error( \
+    "This method cannot be called when using ArduboyG.")))
 #else
 // will still cause linker error
-#define ARDUGRAY_NOT_SUPPORTED
+#define ABG_NOT_SUPPORTED
 #endif
 
-#define ARDUGRAY_TIMER_COUNTER \
-    (16000000 / 64 / ARDUGRAY_HZ)
-
-namespace ardugray_detail
+namespace abg_detail
 {
-
+    
+extern uint16_t timer_counter;
 extern uint8_t  update_counter;
+extern uint8_t  update_every_n;
 extern uint8_t  current_plane;
-#if ARDUGRAY_SYNC == ARDUGRAY_THREE_PHASE
+#if defined(ABG_SYNC_THREE_PHASE)
 extern uint8_t  current_phase;
 #endif
-extern bool     needs_display; // needs display work and/or a call to RENDER_FUNC
+extern bool     needs_display; // needs display work
 
-// Plane              0  1  2
-// ===========================
-//
-// Mode 0 BLACK       .  .
-// Mode 0 DARK_GRAY   X  .
-// Mode 0 LIGHT_GRAY  .  X
-// Mode 0 WHITE       X  X
-//
-// Mode 1 BLACK       .  .  .
-// Mode 1 DARK_GRAY   X  .  .
-// Mode 1 LIGHT_GRAY  X  X  .
-// Mode 1 WHITE       X  X  X
-//
-// Mode 2 BLACK       .  .
-// Mode 2 GRAY        X  .
-// Mode 2 WHITE       X  X
+void send_cmds_(uint8_t const* d, uint8_t n);
+void send_cmds_prog_(uint8_t const* d, uint8_t n);
 
-template<uint8_t PLANE>
-static constexpr uint8_t planeColor(uint8_t color)
+template<uint8_t... CMDS> void send_cmds_prog()
 {
-#if ARDUGRAY_MODE == 0
-    return (color & (PLANE + 1)) ? WHITE : BLACK;
-#elif ARDUGRAY_MODE == 1
-    return (color > PLANE) ? WHITE : BLACK;
-#else
-    return (color > PLANE) ? WHITE : BLACK;
-#endif
+    static uint8_t const CMDS_[] PROGMEM = { CMDS... };
+    send_cmds_prog_(CMDS_, sizeof(CMDS_));
 }
 
-static uint8_t planeColor(uint8_t plane, uint8_t color)
+template<class... CMDS> void send_cmds(CMDS... cmds)
 {
-    if(plane == 0)
-        return planeColor<0>(color);
-    else if(plane == 1 || ARDUGRAY_MODE != 1)
-        return planeColor<1>(color);
-    else
-        return planeColor<2>(color);
+    uint8_t const CMDS_[] = { cmds... };
+    send_cmds_(CMDS_, sizeof(CMDS_));
 }
 
-static void send_cmds(uint8_t const* d, uint8_t n)
-{
-    Arduboy2Base::LCDCommandMode();
-    while(n-- != 0)
-        Arduboy2Base::SPItransfer(*d++);
-    Arduboy2Base::LCDDataMode();
-}
-#define ARDUGRAY_SEND_CMDS(...) \
-    do { \
-        uint8_t const CMDS_[] = { __VA_ARGS__ }; \
-        send_cmds(CMDS_, sizeof(CMDS_)); \
-    } while(0)
+extern uint8_t const YMASK0[8] PROGMEM;
+extern uint8_t const YMASK1[8] PROGMEM;
 
-static void send_cmds_prog(uint8_t const* d, uint8_t n)
-{
-    Arduboy2Base::LCDCommandMode();
-    while(n-- != 0)
-        Arduboy2Base::SPItransfer(pgm_read_byte(d++));
-    Arduboy2Base::LCDDataMode();
-}
-#define ARDUGRAY_SEND_CMDS_PROG(...) \
-    do { \
-        static uint8_t const CMDS_[] PROGMEM = { __VA_ARGS__ }; \
-        send_cmds_prog(CMDS_, sizeof(CMDS_)); \
-    } while(0)
+template<bool CLEAR>
+void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h);
 
-template<class BASE> struct ArduGray_Common : public BASE
+template<
+    class    BASE,
+    ABG_Mode MODE,
+    uint32_t FLAGS
+>
+struct ArduboyG_Common : public BASE
 {
     
     static void startGray()
     {
-        ARDUGRAY_SEND_CMDS_PROG(
+        send_cmds_prog<
             0xC0, 0xA0, // reset to normal orientation
             0xD9, 0x31, // 1-cycle discharge, 3-cycle charge
-            0xA8, 0,    // park at row 0
-        );
+            0xA8, 0     // park at row 0
+        >();
     
         // Fast PWM mode, prescaler /64
-        OCR3A = ARDUGRAY_TIMER_COUNTER;
+        OCR3A = timer_counter;
         TCCR3A = _BV(WGM31) | _BV(WGM30);
         TCCR3B = _BV(WGM33) | _BV(WGM32) | _BV(CS31) | _BV(CS30);
         TCNT3 = 0;
         bitWrite(TIMSK3, OCIE3A, 1);
+    }
+    
+    static void startGrey() { startGray(); }
+    
+    static void setUpdateEveryN(uint8_t images)
+    {
+        update_every_n = images;
+    }
+    
+    static void setRefreshHz(uint8_t hz)
+    {
+        timer_counter = (F_CPU / 64) / hz;
     }
     
     static void drawBitmap(
@@ -319,7 +287,13 @@ template<class BASE> struct ArduGray_Common : public BASE
         uint8_t h,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::drawFastVLine(x, y, h, planeColor(current_plane, color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            color = planeColor(current_plane, color);
+            if(color) fast_rect<false>(x, y, 1, h);
+            else      fast_rect<true >(x, y, 1, h);
+        }
+        else Arduboy2Base::drawFastVLine(x, y, h, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -328,7 +302,13 @@ template<class BASE> struct ArduGray_Common : public BASE
         uint8_t h,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::drawFastVLine(x, y, h, planeColor<PLANE>(color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            color = planeColor<PLANE>(color);
+            if(color) fast_rect<false>(x, y, 1, h);
+            else      fast_rect<true >(x, y, 1, h);
+        }
+        else Arduboy2Base::drawFastVLine(x, y, h, planeColor<PLANE>(color));
     }
     
     static void drawLine(
@@ -389,7 +369,14 @@ template<class BASE> struct ArduGray_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::drawRect(x, y, w, h, planeColor(current_plane, color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            drawFastHLine(x, y, w, color);
+            drawFastHLine(x, y+h-1, w, color);
+            drawFastVLine(x, y, h, color);
+            drawFastVLine(x+w-1, y, h, color);
+        }
+        else Arduboy2Base::drawRect(x, y, w, h, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -398,7 +385,14 @@ template<class BASE> struct ArduGray_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::drawRect(x, y, w, h, planeColor<PLANE>(color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            drawFastHLine<PLANE>(x, y, w, color);
+            drawFastHLine<PLANE>(x, y+h-1, w, color);
+            drawFastVLine<PLANE>(x, y, h, color);
+            drawFastVLine<PLANE>(x+w-1, y, h, color);
+        }
+        else Arduboy2Base::drawRect(x, y, w, h, planeColor<PLANE>(color));
     }
     
     static void drawRoundRect(
@@ -461,7 +455,13 @@ template<class BASE> struct ArduGray_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::fillRect(x, y, w, h, planeColor(current_plane, color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            color = planeColor(current_plane, color);
+            if(color) fast_rect<false>(x, y, w, h);
+            else      fast_rect<true >(x, y, w, h);
+        }
+        else Arduboy2Base::fillRect(x, y, w, h, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -470,7 +470,13 @@ template<class BASE> struct ArduGray_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::fillRect(x, y, w, h, planeColor<PLANE>(color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            color = planeColor<PLANE>(color);
+            if(color) fast_rect<false>(x, y, w, h);
+            else      fast_rect<true >(x, y, w, h);
+        }
+        else Arduboy2Base::fillRect(x, y, w, h, planeColor<PLANE>(color));
     }
     
     static void fillRoundRect(
@@ -512,7 +518,7 @@ template<class BASE> struct ArduGray_Common : public BASE
     
     static bool needsUpdate()
     {
-        if(update_counter >= ARDUGRAY_UPDATE_EVERY_N)
+        if(update_counter >= update_every_n)
         {
             update_counter = 0;
             ++BASE::frameCount; // to allow everyXFrames
@@ -526,7 +532,7 @@ template<class BASE> struct ArduGray_Common : public BASE
         if(!needs_display) return false;
         needs_display = false;
         doDisplay();
-#if ARDUGRAY_SYNC == ARDUGRAY_THREE_PHASE
+#if defined(ABG_SYNC_THREE_PHASE)
         return current_phase == 3;
 #else
         return true;
@@ -542,14 +548,14 @@ template<class BASE> struct ArduGray_Common : public BASE
         return r;
     }
     
-    ARDUGRAY_NOT_SUPPORTED static void flipVertical();
-    ARDUGRAY_NOT_SUPPORTED static void paint8Pixels(uint8_t);
-    ARDUGRAY_NOT_SUPPORTED static void paintScreen(uint8_t const*);
-    ARDUGRAY_NOT_SUPPORTED static void paintScreen(uint8_t[], bool);
-    ARDUGRAY_NOT_SUPPORTED static bool setFrameDuration(uint8_t);
-    ARDUGRAY_NOT_SUPPORTED static bool setFrameRate(uint8_t);
-    ARDUGRAY_NOT_SUPPORTED static bool display();
-    ARDUGRAY_NOT_SUPPORTED static bool display(bool);
+    ABG_NOT_SUPPORTED static void flipVertical();
+    ABG_NOT_SUPPORTED static void paint8Pixels(uint8_t);
+    ABG_NOT_SUPPORTED static void paintScreen(uint8_t const*);
+    ABG_NOT_SUPPORTED static void paintScreen(uint8_t[], bool);
+    ABG_NOT_SUPPORTED static void setFrameDuration(uint8_t);
+    ABG_NOT_SUPPORTED static void setFrameRate(uint8_t);
+    ABG_NOT_SUPPORTED static void display();
+    ABG_NOT_SUPPORTED static void display(bool);
 
 protected:
     
@@ -557,50 +563,50 @@ protected:
     {
         uint8_t* b = getBuffer();
         
-#if ARDUGRAY_SYNC == ARDUGRAY_THREE_PHASE
+#if defined(ABG_SYNC_THREE_PHASE)
         if(current_phase == 1)
         {
-#if ARDUGRAY_MODE == ARDUGRAY_L4_CONTRAST
-            ARDUGRAY_SEND_CMDS(0x81, (current_plane & 1) ? 0xf0 : 0x70);
-#endif
-            ARDUGRAY_SEND_CMDS_PROG(0xA8, 7, 0x22, 0, 7);
+            if(MODE == ABG_Mode::L4_Contrast)
+                send_cmds(0x81, (current_plane & 1) ? 0xf0 : 0x70);
+            send_cmds_prog<0xA8, 7, 0x22, 0, 7>();
         }
         else if(current_phase == 2)
         {
             paint(&b[128 * 7], false, 1, 0xf0);
-            ARDUGRAY_SEND_CMDS_PROG(0x22, 0, 7);
+            send_cmds_prog<0x22, 0, 7>();
         }
         else if(current_phase == 3)
         {
-            ARDUGRAY_SEND_CMDS_PROG(0x22, 0, 7);
+            send_cmds_prog<0x22, 0, 7>();
             paint(&b[128 * 7], false, 1, 0xff);
-            ARDUGRAY_SEND_CMDS_PROG(0xA8, 0);
+            send_cmds_prog<0xA8, 0>();
             paint(&b[128 * 0], true, 7, 0xff);
             paint(&b[128 * 7], true, 1, 0x00);
 
-#if ARDUGRAY_MODE == ARDUGRAY_L4_TRIPLANE
-            if(++current_plane >= 3)
-                current_plane = 0;
-#else
-            current_plane = !current_plane;
-#endif
+            if(MODE == ABG_Mode::L4_Triplane)
+            {
+                if(++current_plane >= 3)
+                    current_plane = 0;
+            }
+            else
+                current_plane = !current_plane;
             if(current_plane == 0)
                 ++update_counter;
         }
-#elif ARDUGRAY_SYNC == ARDUGRAY_PARK_ROW
-#if ARDUGRAY_MODE == ARDUGRAY_L4_CONTRAST
-        ARDUGRAY_SEND_CMDS(0x81, (current_plane & 1) ? 0xf0 : 0x70);
-#endif
+#elif defined(ABG_SYNC_PARK_ROW)
+        if(MODE == ABG_Mode::L4_Contrast)
+            send_cmds(0x81, (current_plane & 1) ? 0xf0 : 0x70);
         paint(&b[128 * 7], true, 1, 0x7F);
-        ARDUGRAY_SEND_CMDS_PROG(0xA8, 63);
+        send_cmds_prog<0xA8, 63>();
         paint(&b[128 * 0], true, 7, 0xFF);
-        ARDUGRAY_SEND_CMDS_PROG(0xA8, 0);
-#if ARDUGRAY_MODE == ARDUGRAY_L4_TRIPLANE
-        if(++current_plane >= 3)
-            current_plane = 0;
-#else
-        current_plane = !current_plane;
-#endif
+        send_cmds_prog<0xA8, 0>();
+        if(MODE == ABG_Mode::L4_Triplane)
+        {
+            if(++current_plane >= 3)
+                current_plane = 0;
+        }
+        else
+            current_plane = !current_plane;
         if(current_plane == 0)
             ++update_counter;
 #endif
@@ -641,33 +647,82 @@ protected:
         SPCR = _BV(SPE) | _BV(MSTR); // LSB-to-MSB
     }
         
+    // Plane              0  1  2
+    // ===========================
+    //
+    // ABG_Mode 0 BLACK       .  .
+    // ABG_Mode 0 DARK_GRAY   X  .
+    // ABG_Mode 0 LIGHT_GRAY  .  X
+    // ABG_Mode 0 WHITE       X  X
+    //
+    // ABG_Mode 1 BLACK       .  .  .
+    // ABG_Mode 1 DARK_GRAY   X  .  .
+    // ABG_Mode 1 LIGHT_GRAY  X  X  .
+    // ABG_Mode 1 WHITE       X  X  X
+    //
+    // ABG_Mode 2 BLACK       .  .
+    // ABG_Mode 2 GRAY        X  .
+    // ABG_Mode 2 WHITE       X  X
+
+    template<uint8_t PLANE>
+    static constexpr uint8_t planeColor(uint8_t color)
+    {
+        return
+            MODE == ABG_Mode::L4_Contrast ? ((color & (PLANE + 1)) ? 1 : 0) :
+            MODE == ABG_Mode::L4_Triplane ? ((color > PLANE) ? 1 : 0) :
+            MODE == ABG_Mode::L3          ? ((color > PLANE) ? 1 : 0) :
+            0;
+    }
+
+    static uint8_t planeColor(uint8_t plane, uint8_t color)
+    {
+        if(plane == 0)
+            return planeColor<0>(color);
+        else if(plane == 1 || MODE != ABG_Mode::L4_Triplane)
+            return planeColor<1>(color);
+        else
+            return planeColor<2>(color);
+    }
+    
 };
 
-} // namespace ardugray_detail
+} // namespace abg_detail
 
-using ArduGrayBase = ardugray_detail::ArduGray_Common<Arduboy2Base>;
+template<
+    ABG_Mode MODE = ABG_Mode::Default,
+    uint8_t FLAGS = ABG_Flags::Default
+>
+using ArduboyGBase_Config = abg_detail::ArduboyG_Common<
+    Arduboy2Base, MODE, FLAGS>;
 
-struct ArduGray : public ardugray_detail::ArduGray_Common<Arduboy2>
+template<
+    ABG_Mode MODE = ABG_Mode::Default,
+    uint8_t FLAGS = ABG_Flags::Default
+>
+struct ArduboyG_Config : public abg_detail::ArduboyG_Common<
+    Arduboy2, MODE, FLAGS>
 {
     
     static void startGray()
     {
-        ArduGrayBase::startGray();
+        ArduboyGBase_Config<MODE, FLAGS>::startGray();
         setTextColor(WHITE); // WHITE is 3 not 1
     }
+    
+    static void startGrey() { startGray(); }
     
     static void drawChar(
         int16_t x, int16_t y,
         uint8_t c,
         uint8_t color, uint8_t bg,
         uint8_t size)
-    {
-        using namespace ardugray_detail;
-        color = planeColor(current_plane, color);
-        bg    = planeColor(current_plane, bg);
+    {        
+        using A = Arduboy2;
+        color = planeColor(abg_detail::current_plane, color);
+        bg    = planeColor(abg_detail::current_plane, bg);
         
         if(color == bg)
-            fillRect(x, y, size * fullCharacterWidth, size * fullCharacterHeight, bg);
+            fillRect(x, y, size * A::fullCharacterWidth, size * A::characterHeight, bg);
         else
             Arduboy2::drawChar(x, y, c, color, bg, size);
     }
@@ -675,56 +730,154 @@ struct ArduGray : public ardugray_detail::ArduGray_Common<Arduboy2>
     // duplicate from Arduboy2 code to use overridden drawChar
     virtual size_t write(uint8_t c) override
     {        
-        if ((c == '\r') && !textRaw)
+        using A = Arduboy2;
+    
+        if ((c == '\r') && !A::textRaw)
         {
             return 1;
         }
 
-        if (((c == '\n') && !textRaw) ||
-            (textWrap && (cursor_x > (WIDTH - (characterWidth * textSize)))))
+        if (((c == '\n') && !A::textRaw) ||
+            (A::textWrap && (A::cursor_x > (WIDTH - (A::characterWidth * A::textSize)))))
         {
-            cursor_x = 0;
-            cursor_y += fullCharacterHeight * textSize;
+            A::cursor_x = 0;
+            A::cursor_y += A::fullCharacterHeight * A::textSize;
         }
 
-        if ((c != '\n') || textRaw)
+        if ((c != '\n') || A::textRaw)
         {
-            drawChar(cursor_x, cursor_y, c, textColor, textBackground, textSize);
-            cursor_x += fullCharacterWidth * textSize;
+            drawChar(A::cursor_x, A::cursor_y, c, A::textColor, A::textBackground, A::textSize);
+            A::cursor_x += A::fullCharacterWidth * A::textSize;
         }
 
         return 1;
     }
 };
+    
+using ArduboyGBase = ArduboyGBase_Config<>;
+using ArduboyG     = ArduboyG_Config<>;
 
-#ifdef ARDUGRAY_IMPLEMENTATION
+#ifdef ABG_IMPLEMENTATION
 
-namespace ardugray_detail
+namespace abg_detail
 {
 
+uint16_t timer_counter = F_CPU / 64 / 135;
 uint8_t update_counter;
+uint8_t update_every_n = 1;
 uint8_t current_plane;
-#if ARDUGRAY_SYNC == ARDUGRAY_THREE_PHASE
+#if defined(ABG_SYNC_THREE_PHASE)
 uint8_t current_phase;
 #endif
 bool    needs_display;
+
+void send_cmds_(uint8_t const* d, uint8_t n)
+{
+    Arduboy2Base::LCDCommandMode();
+    while(n-- != 0)
+        Arduboy2Base::SPItransfer(*d++);
+    Arduboy2Base::LCDDataMode();
+}
+void send_cmds_prog_(uint8_t const* d, uint8_t n)
+{
+    Arduboy2Base::LCDCommandMode();
+    while(n-- != 0)
+        Arduboy2Base::SPItransfer(pgm_read_byte(d++));
+    Arduboy2Base::LCDDataMode();
+}
+
+uint8_t const YMASK0[8] PROGMEM =
+{
+    0xff, 0xfe, 0xfc, 0xf8, 0xf0, 0xe0, 0xc0, 0x80
+};
+uint8_t const YMASK1[8] PROGMEM =
+{
+    0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff
+};
+
+template<bool CLEAR>
+void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
+{
+    if(y >=  64) return;
+    if(x >= 128) return;
+    if(w == 0 || h == 0) return;
+    
+    uint8_t y0 = (y < 0 ? 0 : uint8_t(y));
+    h = (h >  64 ?  64 : h);
+    uint8_t y1 = y0 + h;
+    y1 = (y1 > 64 ? 64 : y1) - 1;
+    
+    uint8_t x0 = (x < 0 ? 0 : uint8_t(x));
+    if(x0 + w >= 128) w = 128 - x0;
+
+    uint8_t t0 = y0 & 0xf8;
+    uint8_t t1 = y1 & 0xf8;
+    uint8_t m0 = pgm_read_byte(&YMASK0[y0 & 7]);
+    uint8_t m1 = pgm_read_byte(&YMASK1[y1 & 7]);
+
+    uint8_t* p = &Arduboy2Base::sBuffer[t0 * (128 / 8) + x0];
+    uint8_t advance = 128 - w;
+
+    if(t0 == t1)
+    {
+        uint8_t m = m0 & m1;
+        if(CLEAR) m = ~m;
+        for(uint8_t n = w; n != 0; --n)
+        {
+            if(CLEAR) *p++ &= m;
+            else      *p++ |= m;
+        }
+        return;
+    }
+
+    {
+        uint8_t m = m0;
+        if(CLEAR) m = ~m;
+        for(uint8_t n = w; n != 0; --n)
+        {
+            if(CLEAR) *p++ &= m;
+            else      *p++ |= m;
+        }
+        p += advance;
+    }
+
+    for(int8_t t = t1 - t0 - 8; t > 0; t -= 8)
+    {
+        for(uint8_t n = w; n != 0; --n)
+            *p++ = (CLEAR ? 0x00 : 0xff);
+        p += advance;
+    }
+
+    {
+        uint8_t m = m1;
+        if(CLEAR) m = ~m;
+        for(uint8_t n = w; n != 0; --n)
+        {
+            if(CLEAR) *p++ &= m;
+            else      *p++ |= m;
+        }
+    }
+}
+
+template void fast_rect<true >(int16_t x, int16_t y, uint8_t w, uint8_t h);
+template void fast_rect<false>(int16_t x, int16_t y, uint8_t w, uint8_t h);
 
 }
 
 ISR(TIMER3_COMPA_vect)
 {
-    using namespace ardugray_detail;
-#if ARDUGRAY_SYNC == ARDUGRAY_THREE_PHASE
+    using namespace abg_detail;
+#if defined(ABG_SYNC_THREE_PHASE)
     if(++current_phase >= 4) current_phase = 1;
 
     if(current_phase == 1)
-        OCR3A = (ARDUGRAY_TIMER_COUNTER >> 4) + 1; // phase 2 delay: 4 lines
+        OCR3A = (timer_counter >> 4) + 1; // phase 2 delay: 4 lines
     else if(current_phase == 2)
-        OCR3A = ARDUGRAY_TIMER_COUNTER;            // phase 3 delay: 64 lines
+        OCR3A = timer_counter;            // phase 3 delay: 64 lines
     else if(current_phase == 3)
-        OCR3A = (ARDUGRAY_TIMER_COUNTER >> 4) + 1; // phase 1 delay: 4 lines
-#elif ARDUGRAY_SYNC == ARDUGRAY_PARK_ROW
-    OCR3A = ARDUGRAY_TIMER_COUNTER;
+        OCR3A = (timer_counter >> 4) + 1; // phase 1 delay: 4 lines
+#elif defined(ABG_SYNC_PARK_ROW)
+    OCR3A = timer_counter;
 #endif
 
     needs_display = true;

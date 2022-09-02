@@ -1,7 +1,7 @@
-#define ARDUGRAY_IMPLEMENTATION
-#include "ArduGray.h"
+#define ABG_IMPLEMENTATION
+#include "ArduboyG.h"
 
-ArduGray a;
+ArduboyG a;
 
 int16_t x, y;
 
