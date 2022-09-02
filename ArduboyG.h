@@ -56,6 +56,8 @@ Example Usage:
     {
         a.begin();
         
+        // Initialize your game state here.
+        
         // This method kicks off the frame ISR that handles refreshing
         // the screen. Usually you would call this at the end of setup().
         a.startGray();
@@ -84,10 +86,6 @@ Example Usage:
 #endif
 #ifdef ABG_SYNC_PARK_ROW
 #undef ABG_SYNC_THREE_PHASE
-#endif
-
-#ifndef ABG_REFRESH_HZ
-#define ABG_REFRESH_HZ 135
 #endif
 
 #undef BLACK
