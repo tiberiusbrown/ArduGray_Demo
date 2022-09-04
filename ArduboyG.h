@@ -10,6 +10,11 @@ Optional Configuration Macros (define before including ArduboyG.h):
     - ABG_SYNC_PARK_ROW
         Sacrifice the bottom row as the parking row. Improves image
         stability and refresh rate, but usable framebuffer height is 63.
+    - ABG_SYNC_SLOW_DRIVE
+        Slow down the display's row drive time as much as possible while
+        parked to allow updating GDDRAM for the park row while it's being
+        driven. Achieves the speed of ABG_SYNC_PARK_ROW without losing
+        the 64th row, at the expense of slight glitches on the park row.
 
 Default Template Configuration:
     
@@ -78,14 +83,15 @@ Example Usage:
 
 #include <Arduboy2.h>
 
-#if !defined(ABG_SYNC_THREE_PHASE) && !defined(ABG_SYNC_PARK_ROW)
+#if !defined(ABG_SYNC_THREE_PHASE) && \
+    !defined(ABG_SYNC_PARK_ROW) && \
+    !defined(ABG_SYNC_SLOW_DRIVE)
 #define ABG_SYNC_THREE_PHASE
 #endif
-#ifdef ABG_SYNC_THREE_PHASE
-#undef ABG_SYNC_PARK_ROW
-#endif
-#ifdef ABG_SYNC_PARK_ROW
-#undef ABG_SYNC_THREE_PHASE
+
+#if !defined(ABG_TIMER3) && \
+    !defined(ABG_TIMER4)
+#define ABG_TIMER3
 #endif
 
 #undef BLACK
@@ -175,13 +181,29 @@ struct ArduboyG_Common : public BASE
             0xD9, 0x31, // 1-cycle discharge, 3-cycle charge
             0xA8, 0     // park at row 0
         >();
-    
+
+        uint8_t sreg = SREG;
+        cli();
+#if defined(ABG_TIMER3)
         // Fast PWM mode, prescaler /64
         OCR3A = timer_counter;
         TCCR3A = _BV(WGM31) | _BV(WGM30);
         TCCR3B = _BV(WGM33) | _BV(WGM32) | _BV(CS31) | _BV(CS30);
         TCNT3 = 0;
         bitWrite(TIMSK3, OCIE3A, 1);
+#elif defined(ABG_TIMER4)
+        // Fast PWM mode, prescaler /256
+        TC4H = (timer_counter >> 8);
+        OCR4C = timer_counter;
+        TCCR4A = 0;
+        TCCR4B = 0x09; // prescaler /256
+        TCCR4C = 0x01; // PWM4D=1 just to enable fast PWM
+        TCCR4D = 0;    // WGM41,WGM40=00: fast PWM
+        TC4H = 0;
+        TCNT4 = 0;
+        bitWrite(TIMSK4, TOIE4, 1);
+#endif
+        SREG = sreg;
     }
     
     static void startGrey() { startGray(); }
@@ -535,7 +557,7 @@ struct ArduboyG_Common : public BASE
         doDisplay();
 #if defined(ABG_SYNC_THREE_PHASE)
         return current_phase == 3;
-#else
+#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
         return true;
 #endif
     }
@@ -594,13 +616,32 @@ protected:
             if(current_plane == 0)
                 ++update_counter;
         }
-#elif defined(ABG_SYNC_PARK_ROW)
+#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
         if(MODE == ABG_Mode::L4_Contrast)
             send_cmds(0x81, (current_plane & 1) ? 0xf0 : 0x70);
-        paint(&b[128 * 7], true, 1, 0x7F);
+#if defined(ABG_SYNC_PARK_ROW)
+        paint(&b[128 * 7], true, 1, 0x7f);
         send_cmds_prog<0xA8, 63>();
-        paint(&b[128 * 0], true, 7, 0xFF);
+        paint(&b[128 * 0], true, 7, 0xff);
         send_cmds_prog<0xA8, 0>();
+#elif defined(ABG_SYNC_SLOW_DRIVE)
+        {
+            uint8_t sreg = SREG;
+            cli();
+            // 1. Run the dot clock into the ground
+            // 2. Disable the charge pump
+            // 3. Make phase 1 and 2 very large
+            send_cmds_prog<
+                0x22, 0, 7, 0x8D, 0x0, 0xD5, 0x0F, 0xD9, 0xFF>();
+            paint(&b[128 * 7], false, 1, 0xff);
+            send_cmds_prog<
+                0xA8, 63, 0x8D, 0x14, 0xD9, 0x31, 0xD5, 0xF0>();
+            SREG = sreg;
+        }
+        paint(&b[128 * 0], true, 7, 0xff);
+        send_cmds_prog<0xA8, 0>();
+        paint(&b[128 * 7], true, 1, 0x00);
+#endif
         if(MODE == ABG_Mode::L4_Triplane)
         {
             if(++current_plane >= 3)
@@ -729,7 +770,7 @@ struct ArduboyG_Config : public abg_detail::ArduboyG_Common<
     }
     
     // duplicate from Arduboy2 code to use overridden drawChar
-    virtual size_t write(uint8_t c) override
+    size_t write(uint8_t c) override
     {        
         using A = Arduboy2;
     
@@ -763,7 +804,11 @@ using ArduboyG     = ArduboyG_Config<>;
 namespace abg_detail
 {
 
+#if defined(ABG_TIMER3)
 uint16_t timer_counter = F_CPU / 64 / 135;
+#elif defined(ABG_TIMER4)
+uint16_t timer_counter = F_CPU / 256 / 135;
+#endif
 uint8_t update_counter;
 uint8_t update_every_n = 1;
 uint8_t current_plane;
@@ -802,14 +847,20 @@ void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
     if(y >=  64) return;
     if(x >= 128) return;
     if(w == 0 || h == 0) return;
+    if(y + h <= 0) return;
+    if(x + w <= 0) return;
     
     uint8_t y0 = (y < 0 ? 0 : uint8_t(y));
     h = (h >  64 ?  64 : h);
-    uint8_t y1 = y0 + h;
+    uint8_t y1 = y + h;
     y1 = (y1 > 64 ? 64 : y1) - 1;
     
-    uint8_t x0 = (x < 0 ? 0 : uint8_t(x));
-    if(x0 + w >= 128) w = 128 - x0;
+    uint8_t x0 = x;
+    if(x < 0)
+    {
+        w += int8_t(x);
+        x0 = 0;
+    }
 
     uint8_t t0 = y0 & 0xf8;
     uint8_t t1 = y1 & 0xf8;
@@ -865,23 +916,46 @@ template void fast_rect<false>(int16_t x, int16_t y, uint8_t w, uint8_t h);
 
 }
 
+#if defined(ABG_TIMER3)
 ISR(TIMER3_COMPA_vect)
 {
     using namespace abg_detail;
 #if defined(ABG_SYNC_THREE_PHASE)
-    if(++current_phase >= 4) current_phase = 1;
-
+    if(++current_phase >= 4)
+        current_phase = 1;
     if(current_phase == 1)
         OCR3A = (timer_counter >> 4) + 1; // phase 2 delay: 4 lines
     else if(current_phase == 2)
         OCR3A = timer_counter;            // phase 3 delay: 64 lines
     else if(current_phase == 3)
         OCR3A = (timer_counter >> 4) + 1; // phase 1 delay: 4 lines
-#elif defined(ABG_SYNC_PARK_ROW)
+#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
     OCR3A = timer_counter;
 #endif
-
     needs_display = true;
 }
-
+#elif defined(ABG_TIMER4)
+ISR(TIMER4_OVF_vect)
+{
+    using namespace abg_detail;
+#if defined(ABG_SYNC_THREE_PHASE)
+    if(++current_phase >= 4)
+        current_phase = 1;
+    uint16_t top = 0;
+    if(current_phase == 1)
+        top = (timer_counter >> 4) + 1; // phase 2 delay: 4 lines
+    else if(current_phase == 2)
+        top = timer_counter;            // phase 3 delay: 64 lines
+    else if(current_phase == 3)
+        top = (timer_counter >> 4) + 1; // phase 1 delay: 4 lines
+    TC4H = (top >> 8);
+    OCR4C = top;
+#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
+    TC4H = (timer_counter >> 8);
+    OCR4C = timer_counter;
 #endif
+    needs_display = true;
+}
+#endif
+
+#endif // ABG_IMPLEMENTATION
