@@ -648,22 +648,22 @@ protected:
         SPCR = _BV(SPE) | _BV(MSTR); // LSB-to-MSB
     }
         
-    // Plane                  0  1  2
-    // ===============================
+    // Plane                               0  1  2
+    // ============================================
     //
-    // ABG_Mode 0 BLACK       .  .
-    // ABG_Mode 0 DARK_GRAY   X  .
-    // ABG_Mode 0 LIGHT_GRAY  .  X
-    // ABG_Mode 0 WHITE       X  X
+    // ABG_Mode::L4_Contrast   BLACK       .  .
+    // ABG_Mode::L4_Contrast   DARK_GRAY   X  .
+    // ABG_Mode::L4_Contrast   LIGHT_GRAY  .  X
+    // ABG_Mode::L4_Contrast   WHITE       X  X
     //
-    // ABG_Mode 1 BLACK       .  .  .
-    // ABG_Mode 1 DARK_GRAY   X  .  .
-    // ABG_Mode 1 LIGHT_GRAY  X  X  .
-    // ABG_Mode 1 WHITE       X  X  X
+    // ABG_Mode::L4_Triplane   BLACK       .  .  .
+    // ABG_Mode::L4_Triplane   DARK_GRAY   X  .  .
+    // ABG_Mode::L4_Triplane   LIGHT_GRAY  X  X  .
+    // ABG_Mode::L4_Triplane   WHITE       X  X  X
     //
-    // ABG_Mode 2 BLACK       .  .
-    // ABG_Mode 2 GRAY        X  .
-    // ABG_Mode 2 WHITE       X  X
+    // ABG_Mode::L3            BLACK       .  .
+    // ABG_Mode::L3            GRAY        X  .
+    // ABG_Mode::L3            WHITE       X  X
 
     template<uint8_t PLANE>
     static constexpr uint8_t planeColor(uint8_t color)
