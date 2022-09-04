@@ -90,14 +90,14 @@ Example Usage:
 
 #undef BLACK
 #undef WHITE
-static constexpr uint8_t BLACK      = 0;
-static constexpr uint8_t DARK_GRAY  = 1;
-static constexpr uint8_t DARK_GREY  = 1;
-static constexpr uint8_t GRAY       = 1;
-static constexpr uint8_t GREY       = 1;
-static constexpr uint8_t LIGHT_GRAY = 2;
-static constexpr uint8_t LIGHT_GREY = 2;
-static constexpr uint8_t WHITE      = 3;
+constexpr uint8_t BLACK      = 0;
+constexpr uint8_t DARK_GRAY  = 1;
+constexpr uint8_t DARK_GREY  = 1;
+constexpr uint8_t GRAY       = 1;
+constexpr uint8_t GREY       = 1;
+constexpr uint8_t LIGHT_GRAY = 2;
+constexpr uint8_t LIGHT_GREY = 2;
+constexpr uint8_t WHITE      = 3;
     
 enum class ABG_Mode : uint8_t
 {
@@ -648,8 +648,8 @@ protected:
         SPCR = _BV(SPE) | _BV(MSTR); // LSB-to-MSB
     }
         
-    // Plane              0  1  2
-    // ===========================
+    // Plane                  0  1  2
+    // ===============================
     //
     // ABG_Mode 0 BLACK       .  .
     // ABG_Mode 0 DARK_GRAY   X  .
