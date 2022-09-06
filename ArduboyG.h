@@ -978,36 +978,6 @@ void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
 template void fast_rect<true >(int16_t x, int16_t y, uint8_t w, uint8_t h);
 template void fast_rect<false>(int16_t x, int16_t y, uint8_t w, uint8_t h);
 
-static inline void draw_overwrite_top(
-    uint8_t* buf, uint8_t const* image, uint16_t mask, uint8_t shift_coef, uint8_t n)
-{
-    uint16_t image_data;
-    uint8_t buf_data;
-    uint8_t* buf2 = buf + 128;
-    asm volatile(
-        "L1_%=:\n"
-        "lpm %A[image_data], Z+\n"
-        "mul %A[image_data], %[shift_coef]\n"
-        "movw %[image_data], r0\n"
-        "ld %[buf_data], X\n"
-        "and %[buf_data], %B[mask]\n"
-        "or %[buf_data], %B[image_data]\n"
-        "st X+, %[buf_data]\n"
-        "dec %[n]\n"
-        "brne L1_%=\n"
-        "clr __zero_reg__\n"
-        :
-        [buf2]       "+&x" (buf2),
-        [image]      "+&z" (image),
-        [n]          "+&a" (n),
-        [buf_data]   "=&r" (buf_data),
-        [image_data] "=&r" (image_data)
-        :
-        [mask]       "r"   (mask),
-        [shift_coef] "r"   (shift_coef)
-        );
-}
-
 template<SpriteMode SPRITE_MODE> void draw_sprite(
     int16_t x, int16_t y,
     uint8_t const* image, uint8_t frame,
