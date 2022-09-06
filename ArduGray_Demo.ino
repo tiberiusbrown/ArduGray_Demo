@@ -12,6 +12,13 @@ static uint8_t const SPRITES[] PROGMEM =
     0xaa, 0xae, 0xa0, 0xae, 0xea, 0x0a, 0xea, 0xaa, // plane 0
     0x66, 0x60, 0x60, 0x66, 0x06, 0x06, 0x66, 0x66, // plane 1
 };
+static uint8_t const BALL_PLUS_MASK[] PROGMEM =
+{
+    8, 8,
+    0x3c, 0x3c, 0x3c, 0x42, 0x42, 0x7e, 0x81, 0x81, 0xff,
+    0x81, 0x81, 0xff, 0x81, 0x81, 0xff, 0x81, 0x81, 0xff,
+    0x42, 0x42, 0x7e, 0x3c, 0x3c, 0x3c,
+};
 static uint8_t const BALL[] PROGMEM =
 {
     8, 8,
@@ -42,13 +49,14 @@ void render()
     for(int16_t sy = 0; sy < 72; sy += 8)
         for(int16_t sx = 0; sx < 136; sx += 8)
             a.drawOverwrite(sx - ox, sy - oy, SPRITES, 0);
-    a.drawExternalMask(60, 12, BALL, BALL_MASK, 0, 0);
+    a.drawPlusMask(52, 12, BALL_PLUS_MASK, 0);
+    a.drawExternalMask(68, 12, BALL, BALL_MASK, 0, 0);
 
-    a.setCursor(20, 28);
+    a.setCursor(14, 28);
     a.setTextColor(WHITE);
-    a.print(F("Hello "));
+    a.print(F(" Hello "));
     a.setTextColor(DARK_GRAY);
-    a.print(F("ArduboyG!"));
+    a.print(F("ArduboyG! "));
 }
 
 void setup()
