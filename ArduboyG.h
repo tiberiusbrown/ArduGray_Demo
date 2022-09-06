@@ -1248,15 +1248,13 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 dec %[count]
                 brne L%=_top_loop
                 
-                ; decrement pages, reset buf back, advance image and mask
+                ; decrement pages, reset buf back, advance image
                 clr __zero_reg__
                 dec %[pages]
                 sub %A[buf], %[n]
                 sbc %B[buf], __zero_reg__
                 add %A[image], %[image_adv]
                 adc %B[image], __zero_reg__
-                add %A[mask], %[image_adv]
-                adc %B[mask], __zero_reg__
         
             L%=_middle:
             
@@ -1310,8 +1308,6 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 adc r29, __zero_reg__
                 add %A[image], %[image_adv]
                 adc %B[image], __zero_reg__
-                add %A[mask], %[image_adv]
-                adc %B[mask], __zero_reg__
                 dec %[pages]
                 brne L%=_middle_loop_outer
                 
@@ -1355,7 +1351,6 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
             :
             [buf]        "+&x" (buf),
             [image]      "+&z" (image),
-            [mask]       "+&l" (mask),
             [pages]      "+&l" (pages),
             [count]      "=&l" (count),
             [buf_data]   "=&l" (buf_data),
