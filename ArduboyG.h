@@ -1081,6 +1081,9 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
     uint8_t buf_adv = 128 - n;
     uint8_t image_adv = w - n;
     
+    if(SPRITE_MODE == SpriteMode::PlusMask)
+        image_adv *= 3;
+    
     if(SPRITE_MODE == SpriteMode::Overwrite)
     {
         uint16_t image_data;
