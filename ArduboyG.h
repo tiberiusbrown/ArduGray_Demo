@@ -1021,7 +1021,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
         if(SPRITE_MODE == SpriteMode::ExternalMask)
             mask += plane_bytes * mask_frame;
         if(SPRITE_MODE == SpriteMode::PlusMask)
-            mask += plane_bytes * mask_frame * 3;
+            image += plane_bytes * mask_frame * 3;
     }
     
     uint8_t shift_coef;
