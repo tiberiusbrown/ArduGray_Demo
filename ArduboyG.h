@@ -5,11 +5,11 @@ Optional Configuration Macros (define before including ArduboyG.h):
     Frame sync method. Choices are one of:
     - ABG_SYNC_THREE_PHASE (default)
         Loop around an additional 8 rows to cover the park row. Reduces
-        both refresh rate due to extra rows drive and image stability due
-        to tighter timing windows, but allows a framebuffer height of 64.
+        both refresh rate and time available for rendering due to extra
+        rows driven, but allows a framebuffer height of 64.
     - ABG_SYNC_PARK_ROW
-        Sacrifice the bottom row as the parking row. Improves image
-        stability and refresh rate, but usable framebuffer height is 63.
+        Sacrifice the bottom row as the parking row. Improves rendering
+        time and refresh rate, but usable framebuffer height is 63.
     - ABG_SYNC_SLOW_DRIVE
         Slow down the display's row drive time as much as possible while
         parked to allow updating GDDRAM for the park row while it's being
@@ -119,9 +119,13 @@ struct ABG_Flags
     enum
     {
         None = 0,
-        OptimizeFillRect = (1 << 0),
+        OptimizeFillRect      = (1 << 0),
+        OptimizeDrawOverwrite = (1 << 1),
         
-        Default = OptimizeFillRect,
+        Default =
+            OptimizeFillRect |
+            OptimizeDrawOverwrite |
+            0,
     };
 };
 
@@ -165,6 +169,18 @@ extern uint8_t const YMASK1[8] PROGMEM;
 
 template<bool CLEAR>
 void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h);
+
+enum class SpriteMode : uint8_t
+{
+    Overwrite,
+    PlusMask,
+    ExternalMask,
+};
+
+template<SpriteMode SPRITE_MODE> void draw_sprite(
+    int16_t x, int16_t y,
+    uint8_t const* image, uint8_t frame,
+    uint8_t const* mask, uint8_t mask_frame);
 
 template<
     class    BASE,
@@ -217,7 +233,7 @@ struct ArduboyG_Common : public BASE
     {
         timer_counter = (F_CPU / 64) / hz;
     }
-    
+
     static void drawBitmap(
         int16_t x, int16_t y,
         uint8_t const* bitmap,
@@ -532,7 +548,38 @@ struct ArduboyG_Common : public BASE
         uint8_t color = WHITE)
     {
         Arduboy2Base::fillScreen(planeColor<PLANE>(color));
-    }    
+    }
+    
+    void drawOverwrite(
+        int16_t x, int16_t y,
+        uint8_t const* bitmap,
+        uint8_t frame)
+    {
+        static_assert(MODE != ABG_Mode::L4_Triplane,
+            "drawOverwrite does not support L4_Triplane mode");
+        if(FLAGS & ABG_Flags::OptimizeDrawOverwrite)
+            draw_sprite<SpriteMode::Overwrite>(x, y, bitmap, frame, nullptr, 0);
+        else
+        {
+            frame *= 2;
+            if(current_plane == 1)
+                frame += 1;
+            Sprites::drawOverwrite(x, y, bitmap, frame);
+        }
+    }
+    
+    void drawExternalMask(
+        int16_t x, int16_t y,
+        uint8_t const* bitmap, uint8_t const* mask,
+        uint8_t frame, uint8_t mask_frame)
+    {
+        static_assert(MODE != ABG_Mode::L4_Triplane,
+            "drawExternalMask does not support L4_Triplane mode");
+        frame *= 2;
+        if(current_plane == 1)
+            frame += 1;
+        Sprites::drawExternalMask(x, y, bitmap, mask, frame, mask_frame);
+    }
 
     static uint8_t currentPlane()
     {
@@ -725,7 +772,7 @@ protected:
         else
             return planeColor<2>(color);
     }
-    
+
 };
 
 } // namespace abg_detail
@@ -809,13 +856,13 @@ uint16_t timer_counter = F_CPU / 64 / 135;
 #elif defined(ABG_TIMER4)
 uint16_t timer_counter = F_CPU / 256 / 135;
 #endif
-uint8_t update_counter;
-uint8_t update_every_n = 1;
-uint8_t current_plane;
+uint8_t  update_counter;
+uint8_t  update_every_n = 1;
+uint8_t  current_plane;
 #if defined(ABG_SYNC_THREE_PHASE)
-uint8_t current_phase;
+uint8_t  current_phase;
 #endif
-bool    needs_display;
+bool     needs_display;
 
 void send_cmds_(uint8_t const* d, uint8_t n)
 {
@@ -913,6 +960,264 @@ void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
 
 template void fast_rect<true >(int16_t x, int16_t y, uint8_t w, uint8_t h);
 template void fast_rect<false>(int16_t x, int16_t y, uint8_t w, uint8_t h);
+
+static inline void draw_overwrite_top(
+    uint8_t* buf, uint8_t const* image, uint16_t mask, uint8_t shift_coef, uint8_t n)
+{
+    uint16_t image_data;
+    uint8_t buf_data;
+    uint8_t* buf2 = buf + 128;
+    asm volatile(
+        "L1_%=:\n"
+        "lpm %A[image_data], Z+\n"
+        "mul %A[image_data], %[shift_coef]\n"
+        "movw %[image_data], r0\n"
+        "ld %[buf_data], X\n"
+        "and %[buf_data], %B[mask]\n"
+        "or %[buf_data], %B[image_data]\n"
+        "st X+, %[buf_data]\n"
+        "dec %[n]\n"
+        "brne L1_%=\n"
+        "clr __zero_reg__\n"
+        :
+        [buf2]       "+&x" (buf2),
+        [image]      "+&z" (image),
+        [n]          "+&a" (n),
+        [buf_data]   "=&r" (buf_data),
+        [image_data] "=&r" (image_data)
+        :
+        [mask]       "r"   (mask),
+        [shift_coef] "r"   (shift_coef)
+        );
+}
+
+template<SpriteMode SPRITE_MODE> void draw_sprite(
+    int16_t x, int16_t y,
+    uint8_t const* image, uint8_t frame,
+    uint8_t const* mask, uint8_t mask_frame)
+{
+    if(image == nullptr) return;
+    if(x >= 128 || y >= 64) return;
+    
+    uint8_t w, h;
+    asm volatile(
+        "lpm %[w], Z+\n"
+        "lpm %[h], Z+\n"
+        : [w] "=r" (w), [h] "=r" (h), [image] "+z" (image));
+
+    if(x + w <= 0) return;
+    if(y + h <= 0) return;
+    
+    uint8_t pages = h;
+    asm volatile(
+        "lsr %[pages]\n"
+        "lsr %[pages]\n"
+        "lsr %[pages]\n"
+        : [pages] "+&r" (pages));
+    if(h & 7) ++pages;
+    
+    {
+        uint16_t frame_offset = pages * w;
+        if(SPRITE_MODE == SpriteMode::Overwrite)
+        {
+            image += (frame_offset * 2) * frame;
+            if(current_plane == 1)
+                image += frame_offset;
+        }
+    }
+    
+    uint8_t shift_coef;
+    uint16_t shift_mask;
+    {
+        uint8_t y_offset = uint8_t(y) & 7;
+        shift_coef = 1 << y_offset;
+        shift_mask = ~(0xff * shift_coef);
+    }
+    
+    // y /= 8 (round to -inf)
+    asm volatile(
+        "asr %B[y]\n"
+        "ror %A[y]\n"
+        "asr %B[y]\n"
+        "ror %A[y]\n"
+        "asr %B[y]\n"
+        "ror %A[y]\n"
+        : [y] "+&r" (y));
+    
+    // clip against top edge
+    int8_t page_start = int8_t(y);
+    if(page_start < -1)
+    {
+        uint8_t tp = (-1 - page_start);
+        image += tp * w;
+        pages -= tp;
+        page_start = -1;
+    }
+    
+    // clip against left edge
+    uint8_t n = w;
+    int8_t col_start = int8_t(x);
+    if(col_start < 0)
+    {
+        image -= col_start;
+        n += col_start;
+        col_start = 0;
+    }
+    
+    uint8_t* buf = Arduboy2Base::sBuffer;
+    buf += page_start * 128;
+    buf += col_start;
+
+    // clip against right edge
+    if(n > 128 - col_start)
+        n = 128 - col_start;
+    
+    bool bottom = false;
+    if(page_start + pages == 8)
+    {
+        --pages;
+        bottom = true;
+    }
+    
+    uint8_t buf_adv = 128 - n;
+    uint8_t image_adv = w - n;
+    
+    if(SPRITE_MODE == SpriteMode::Overwrite)
+    {
+        uint16_t image_data;
+        uint8_t buf_data;
+        uint8_t count;
+        asm volatile(R"ASM(
+        
+                cpi %[page_start], 0
+                brge L%=_middle
+                
+                ; advance buf to next page
+                subi %A[buf], lo8(-128)
+                sbci %B[buf], hi8(-128)
+                
+                ; write one page from image to buf+128
+                L1_%=:
+                lpm %A[image_data], Z+
+                mul %A[image_data], %[shift_coef]
+                movw %[image_data], r0
+                ld %[buf_data], %a[buf]
+                and %[buf_data], %B[mask]
+                or %[buf_data], %B[image_data]
+                st %a[buf]+, %[buf_data]
+                dec %[n]
+                brne L1_%=
+                
+                ; decrement pages, reset buf back, advance image
+                clr __zero_reg__
+                dec %[pages]
+                sub %A[buf], %[n]
+                sbc %B[buf], __zero_reg__
+                add %A[image], %[image_adv]
+                adc %B[image], __zero_reg__
+        
+            L%=_middle:
+            
+                tst %[pages]
+                breq L%=_bottom
+            
+                ; need Y pointer for middle pages
+                push r28
+                push r29
+                movw r28, %[buf]
+                subi r28, lo8(-128)
+                sbci r29, hi8(-128)
+                
+            L%=_middle_loop_outer:
+            
+                mov %[count], %[n]
+                
+            L%=_middle_loop_inner:
+
+                ; write one page from image to buf/buf+128
+                lpm %A[image_data], %a[image]+
+                mul %A[image_data], %[shift_coef]
+                movw %[image_data], r0
+                ld %[buf_data], %a[buf]
+                and %[buf_data], %A[mask]
+                or %[buf_data], %A[image_data]
+                st %a[buf]+, %[buf_data]
+                ld %[buf_data], Y
+                and %[buf_data], %B[mask]
+                or %[buf_data], %B[image_data]
+                st Y+, %[buf_data]
+                dec %[count]
+                brne L%=_middle_loop_inner
+                
+                ; advance buf, buf+128, and image to the next page
+                clr __zero_reg__
+                add %A[buf], %[buf_adv]
+                adc %B[buf], __zero_reg__
+                add r28, %[buf_adv]
+                adc r29, __zero_reg__
+                add %A[image], %[image_adv]
+                adc %B[image], __zero_reg__
+                dec %[pages]
+                brne L%=_middle_loop_outer
+                
+                ; done with Y pointer
+                pop r29
+                pop r28
+                
+            L%=_bottom:
+            
+                tst %[bottom]
+                breq L%=finish
+                
+            L%=_bottom_loop:
+            
+                ; write one page from image to buf
+                lpm %A[image_data], Z+
+                mul %A[image_data], %[shift_coef]
+                movw %[image_data], r0
+                ld %[buf_data], X
+                and %[buf_data], %A[mask]
+                or %[buf_data], %A[image_data]
+                st X+, %[buf_data]
+                dec %[n]
+                brne L%=_bottom_loop
+            
+            L%=finish:
+            
+                clr __zero_reg__
+                
+            )ASM"
+            :
+            [buf]        "+&x" (buf),
+            [image]      "+&z" (image),
+            [pages]      "+&l" (pages),
+            [count]      "=&l" (count),
+            [buf_data]   "=&l" (buf_data),
+            [image_data] "=&l" (image_data)
+            :
+            [n]          "l"   (n),
+            [buf_adv]    "l"   (buf_adv),
+            [image_adv]  "l"   (image_adv),
+            [mask]       "l"   (shift_mask),
+            [shift_coef] "l"   (shift_coef),
+            [bottom]     "l"   (bottom),
+            [page_start] "a"   (page_start)
+            );
+    }
+}
+
+template void draw_sprite<SpriteMode::Overwrite>(
+    int16_t x, int16_t y,
+    uint8_t const* image, uint8_t frame,
+    uint8_t const* mask, uint8_t mask_frame);
+//template void draw_sprite<SpriteMode::PlusMask>(
+//    int16_t x, int16_t y,
+//    uint8_t const* image, uint8_t frame,
+//    uint8_t const* mask, uint8_t mask_frame);
+//template void draw_sprite<SpriteMode::ExternalMask>(
+//    int16_t x, int16_t y,
+//    uint8_t const* image, uint8_t frame,
+//    uint8_t const* mask, uint8_t mask_frame);
 
 }
 

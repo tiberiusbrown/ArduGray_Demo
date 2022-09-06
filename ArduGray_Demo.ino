@@ -5,6 +5,14 @@ ArduboyG a;
 
 int16_t x, y;
 
+static uint8_t const SPRITES[] PROGMEM =
+{
+    8, 8,
+    
+    0xaa, 0xae, 0xa0, 0xae, 0xea, 0x0a, 0xea, 0xaa, // plane 0
+    0x66, 0x60, 0x60, 0x66, 0x06, 0x06, 0x66, 0x66, // plane 1
+};
+
 void update()
 {
     // Handle input and update game state here.
@@ -17,14 +25,18 @@ void update()
 void render()
 {
     // Draw your game graphics here.
+
+    uint8_t ox = x & 7;
+    uint8_t oy = y & 7;
+    for(int16_t sy = 0; sy < 72; sy += 8)
+        for(int16_t sx = 0; sx < 136; sx += 8)
+            a.drawOverwrite(sx - ox, sy - oy, SPRITES, 0);
+
     a.setCursor(20, 28);
     a.setTextColor(WHITE);
     a.print(F("Hello "));
     a.setTextColor(DARK_GRAY);
     a.print(F("ArduboyG!"));
-    a.fillRect(x +  0, y, 5, 15, WHITE);
-    a.fillRect(x +  5, y, 5, 15, LIGHT_GRAY);
-    a.fillRect(x + 10, y, 5, 15, DARK_GRAY);
 }
 
 void setup()
