@@ -119,12 +119,14 @@ struct ABG_Flags
     enum
     {
         None = 0,
-        OptimizeFillRect      = (1 << 0),
-        OptimizeDrawOverwrite = (1 << 1),
+        OptimizeFillRect         = (1 << 0),
+        OptimizeDrawOverwrite    = (1 << 1),
+        OptimizeDrawExternalMask = (1 << 2),
         
         Default =
-            OptimizeFillRect |
-            OptimizeDrawOverwrite |
+            OptimizeFillRect         |
+            OptimizeDrawOverwrite    |
+            OptimizeDrawExternalMask |
             0,
     };
 };
@@ -575,10 +577,15 @@ struct ArduboyG_Common : public BASE
     {
         static_assert(MODE != ABG_Mode::L4_Triplane,
             "drawExternalMask does not support L4_Triplane mode");
-        frame *= 2;
-        if(current_plane == 1)
-            frame += 1;
-        Sprites::drawExternalMask(x, y, bitmap, mask, frame, mask_frame);
+        if(FLAGS & ABG_Flags::OptimizeDrawExternalMask)
+            draw_sprite<SpriteMode::ExternalMask>(x, y, bitmap, frame, mask, mask_frame);
+        else
+        {
+            frame *= 2;
+            if(current_plane == 1)
+                frame += 1;
+            Sprites::drawExternalMask(x, y, bitmap, mask, frame, mask_frame);
+        }
     }
 
     static uint8_t currentPlane()
@@ -997,6 +1004,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
     uint8_t const* mask, uint8_t mask_frame)
 {
     if(image == nullptr) return;
+    if(SPRITE_MODE == SpriteMode::ExternalMask && mask == nullptr) return;
     if(x >= 128 || y >= 64) return;
     
     uint8_t w, h;
@@ -1017,13 +1025,17 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
     if(h & 7) ++pages;
     
     {
-        uint16_t frame_offset = pages * w;
-        if(SPRITE_MODE == SpriteMode::Overwrite)
+        uint16_t plane_bytes = pages * w;
+        uint16_t frame_bytes = plane_bytes * 2;
+        if( SPRITE_MODE == SpriteMode::Overwrite ||
+            SPRITE_MODE == SpriteMode::ExternalMask)
         {
-            image += (frame_offset * 2) * frame;
+            image += frame_bytes * frame;
             if(current_plane == 1)
-                image += frame_offset;
+                image += plane_bytes;
         }
+        if(SPRITE_MODE == SpriteMode::ExternalMask)
+            mask += plane_bytes * mask_frame;
     }
     
     uint8_t shift_coef;
@@ -1097,17 +1109,18 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 subi %A[buf], lo8(-128)
                 sbci %B[buf], hi8(-128)
                 
+            L%=_top_loop:
+            
                 ; write one page from image to buf+128
-                L1_%=:
-                lpm %A[image_data], Z+
+                lpm %A[image_data], %a[image]+
                 mul %A[image_data], %[shift_coef]
                 movw %[image_data], r0
                 ld %[buf_data], %a[buf]
-                and %[buf_data], %B[mask]
+                and %[buf_data], %B[shift_mask]
                 or %[buf_data], %B[image_data]
                 st %a[buf]+, %[buf_data]
                 dec %[n]
-                brne L1_%=
+                brne L%=_top_loop
                 
                 ; decrement pages, reset buf back, advance image
                 clr __zero_reg__
@@ -1140,11 +1153,11 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 mul %A[image_data], %[shift_coef]
                 movw %[image_data], r0
                 ld %[buf_data], %a[buf]
-                and %[buf_data], %A[mask]
+                and %[buf_data], %A[shift_mask]
                 or %[buf_data], %A[image_data]
                 st %a[buf]+, %[buf_data]
                 ld %[buf_data], Y
-                and %[buf_data], %B[mask]
+                and %[buf_data], %B[shift_mask]
                 or %[buf_data], %B[image_data]
                 st Y+, %[buf_data]
                 dec %[count]
@@ -1173,13 +1186,13 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
             L%=_bottom_loop:
             
                 ; write one page from image to buf
-                lpm %A[image_data], Z+
+                lpm %A[image_data], %a[image]+
                 mul %A[image_data], %[shift_coef]
                 movw %[image_data], r0
-                ld %[buf_data], X
-                and %[buf_data], %A[mask]
+                ld %[buf_data], %a[buf]
+                and %[buf_data], %A[shift_mask]
                 or %[buf_data], %A[image_data]
-                st X+, %[buf_data]
+                st %a[buf]+, %[buf_data]
                 dec %[n]
                 brne L%=_bottom_loop
             
@@ -1191,15 +1204,178 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
             :
             [buf]        "+&x" (buf),
             [image]      "+&z" (image),
-            [pages]      "+&l" (pages),
+            [pages]      "+&a" (pages),
             [count]      "=&l" (count),
-            [buf_data]   "=&l" (buf_data),
-            [image_data] "=&l" (image_data)
+            [buf_data]   "=&a" (buf_data),
+            [image_data] "=&a" (image_data)
             :
             [n]          "l"   (n),
             [buf_adv]    "l"   (buf_adv),
             [image_adv]  "l"   (image_adv),
-            [mask]       "l"   (shift_mask),
+            [shift_mask] "l"   (shift_mask),
+            [shift_coef] "l"   (shift_coef),
+            [bottom]     "l"   (bottom),
+            [page_start] "a"   (page_start)
+            );
+    }
+    
+    if(SPRITE_MODE == SpriteMode::ExternalMask)
+    {
+        uint8_t const* image_temp;
+        uint16_t image_data;
+        uint16_t mask_data;
+        uint8_t buf_data;
+        uint8_t count;
+        asm volatile(R"ASM(
+        
+                cpi %[page_start], 0
+                brge L%=_middle
+                
+                ; advance buf to next page
+                subi %A[buf], lo8(-128)
+                sbci %B[buf], hi8(-128)
+                
+            L%=_top_loop:
+                
+                ; write one page from image to buf+128
+                lpm %A[image_data], %a[image]+
+                movw %[image_temp], %[image]
+                movw %[image], %[mask]
+                lpm %A[mask_data], %a[image]+
+                movw %[mask], %[image]
+                movw %[image], %[image_temp]
+                
+                mul %A[image_data], %[shift_coef]
+                movw %[image_data], r0
+                mul %A[mask_data], %[shift_coef]
+                movw %[mask_data], r0
+                
+                ld %[buf_data], %a[buf]
+                com %B[mask_data]
+                and %[buf_data], %B[mask_data]
+                or %[buf_data], %B[image_data]
+                st %a[buf]+, %[buf_data]
+                dec %[n]
+                brne L%=_top_loop
+                
+                ; decrement pages, reset buf back, advance image and mask
+                clr __zero_reg__
+                dec %[pages]
+                sub %A[buf], %[n]
+                sbc %B[buf], __zero_reg__
+                add %A[image], %[image_adv]
+                adc %B[image], __zero_reg__
+                add %A[mask], %[image_adv]
+                adc %B[mask], __zero_reg__
+        
+            L%=_middle:
+            
+                tst %[pages]
+                breq L%=_bottom
+            
+                ; need Y pointer for middle pages
+                push r28
+                push r29
+                movw r28, %[buf]
+                subi r28, lo8(-128)
+                sbci r29, hi8(-128)
+                
+            L%=_middle_loop_outer:
+            
+                mov %[count], %[n]
+                
+            L%=_middle_loop_inner:
+
+                ; write one page from image to buf/buf+128
+                lpm %A[image_data], %a[image]+
+                movw %[image_temp], %[image]
+                movw %[image], %[mask]
+                lpm %A[mask_data], %a[image]+
+                movw %[mask], %[image]
+                movw %[image], %[image_temp]
+                
+                mul %A[image_data], %[shift_coef]
+                movw %[image_data], r0
+                mul %A[mask_data], %[shift_coef]
+                movw %[mask_data], r0
+                
+                ld %[buf_data], %a[buf]
+                com %A[mask_data]
+                and %[buf_data], %A[mask_data]
+                or %[buf_data], %A[image_data]
+                st %a[buf]+, %[buf_data]
+                ld %[buf_data], Y
+                com %B[mask_data]
+                and %[buf_data], %B[mask_data]
+                or %[buf_data], %B[image_data]
+                st Y+, %[buf_data]
+                dec %[count]
+                brne L%=_middle_loop_inner
+                
+                ; advance buf, buf+128, and image to the next page
+                clr __zero_reg__
+                add %A[buf], %[buf_adv]
+                adc %B[buf], __zero_reg__
+                add r28, %[buf_adv]
+                adc r29, __zero_reg__
+                add %A[image], %[image_adv]
+                adc %B[image], __zero_reg__
+                add %A[mask], %[image_adv]
+                adc %B[mask], __zero_reg__
+                dec %[pages]
+                brne L%=_middle_loop_outer
+                
+                ; done with Y pointer
+                pop r29
+                pop r28
+                
+            L%=_bottom:
+            
+                tst %[bottom]
+                breq L%=finish
+                
+            L%=_bottom_loop:
+            
+                ; write one page from image to buf
+                lpm %A[image_data], %a[image]+
+                movw %[image_temp], %[image]
+                movw %[image], %[mask]
+                lpm %A[mask_data], %a[image]+
+                movw %[mask], %[image]
+                movw %[image], %[image_temp]
+
+                mul %A[image_data], %[shift_coef]
+                movw %[image_data], r0
+                mul %A[mask_data], %[shift_coef]
+                movw %[mask_data], r0
+                
+                ld %[buf_data], %a[buf]
+                com %A[mask_data]
+                and %[buf_data], %A[mask_data]
+                or %[buf_data], %A[image_data]
+                st %a[buf]+, %[buf_data]
+                dec %[n]
+                brne L%=_bottom_loop
+            
+            L%=finish:
+            
+                clr __zero_reg__
+                
+            )ASM"
+            :
+            [buf]        "+&x" (buf),
+            [image]      "+&z" (image),
+            [mask]       "+&l" (mask),
+            [pages]      "+&l" (pages),
+            [count]      "=&l" (count),
+            [buf_data]   "=&l" (buf_data),
+            [image_data] "=&l" (image_data),
+            [mask_data]  "=&l" (mask_data),
+            [image_temp] "=&a" (image_temp)
+            :
+            [n]          "l"   (n),
+            [buf_adv]    "l"   (buf_adv),
+            [image_adv]  "l"   (image_adv),
             [shift_coef] "l"   (shift_coef),
             [bottom]     "l"   (bottom),
             [page_start] "a"   (page_start)
@@ -1215,10 +1391,10 @@ template void draw_sprite<SpriteMode::Overwrite>(
 //    int16_t x, int16_t y,
 //    uint8_t const* image, uint8_t frame,
 //    uint8_t const* mask, uint8_t mask_frame);
-//template void draw_sprite<SpriteMode::ExternalMask>(
-//    int16_t x, int16_t y,
-//    uint8_t const* image, uint8_t frame,
-//    uint8_t const* mask, uint8_t mask_frame);
+template void draw_sprite<SpriteMode::ExternalMask>(
+    int16_t x, int16_t y,
+    uint8_t const* image, uint8_t frame,
+    uint8_t const* mask, uint8_t mask_frame);
 
 }
 
