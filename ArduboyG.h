@@ -1072,10 +1072,11 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
     if(n > 128 - col_start)
         n = 128 - col_start;
     
+    // clip against bottom edge
     bool bottom = false;
-    if(page_start + pages == 8)
+    if(pages > 7 - page_start)
     {
-        --pages;
+        pages = 7 - page_start;
         bottom = true;
     }
     
