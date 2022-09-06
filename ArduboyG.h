@@ -16,6 +16,10 @@ Optional Configuration Macros (define before including ArduboyG.h):
         driven. Achieves the speed of ABG_SYNC_PARK_ROW without losing
         the 64th row, at the expense of slight glitches on the park row.
 
+    Timer used for the frame ISR. Choices are one of:
+    - ABG_TIMER3 (default)
+    - ABG_TIMER4
+
 Default Template Configuration:
     
     ArduboyGBase a;
