@@ -1097,6 +1097,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 ; advance buf to next page
                 subi %A[buf], lo8(-128)
                 sbci %B[buf], hi8(-128)
+                mov %[count], %[n]
                 
             L%=_top_loop:
             
@@ -1108,7 +1109,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 and %[buf_data], %B[shift_mask]
                 or %[buf_data], %B[image_data]
                 st %a[buf]+, %[buf_data]
-                dec %[n]
+                dec %[count]
                 brne L%=_top_loop
                 
                 ; decrement pages, reset buf back, advance image
@@ -1222,6 +1223,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 ; advance buf to next page
                 subi %A[buf], lo8(-128)
                 sbci %B[buf], hi8(-128)
+                mov %[count], %[n]
                 
             L%=_top_loop:
                 
@@ -1243,7 +1245,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 and %[buf_data], %B[mask_data]
                 or %[buf_data], %B[image_data]
                 st %a[buf]+, %[buf_data]
-                dec %[n]
+                dec %[count]
                 brne L%=_top_loop
                 
                 ; decrement pages, reset buf back, advance image and mask
@@ -1385,6 +1387,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 ; advance buf to next page
                 subi %A[buf], lo8(-128)
                 sbci %B[buf], hi8(-128)
+                mov %[count], %[n]
                 
             L%=_top_loop:
                 
@@ -1406,7 +1409,7 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
                 and %[buf_data], %B[mask_data]
                 or %[buf_data], %B[image_data]
                 st %a[buf]+, %[buf_data]
-                dec %[n]
+                dec %[count]
                 brne L%=_top_loop
                 
                 ; decrement pages, reset buf back, advance image and mask
