@@ -17,6 +17,7 @@ Optional Configuration Macros (define before including ArduboyG.h):
         the 64th row, at the expense of slight glitches on the park row.
 
     Timer used for the frame ISR. Choices are one of:
+    - ABG_TIMER1
     - ABG_TIMER3 (default)
     - ABG_TIMER4
 
@@ -74,8 +75,7 @@ Example Usage:
 
     void loop()
     {
-        if(!a.nextFrame())
-            return;
+        a.waitForNextPlane();
         if(a.needsUpdate())
             update();
         render();
@@ -87,6 +87,8 @@ Example Usage:
 
 #include <Arduboy2.h>
 
+#include <avr/sleep.h>
+
 #if !defined(ABG_SYNC_THREE_PHASE) && \
     !defined(ABG_SYNC_PARK_ROW) && \
     !defined(ABG_SYNC_SLOW_DRIVE)
@@ -94,7 +96,8 @@ Example Usage:
 #endif
 
 #if !defined(ABG_TIMER3) && \
-    !defined(ABG_TIMER4)
+    !defined(ABG_TIMER4) && \
+    !defined(ABG_TIMER1)
 #define ABG_TIMER3
 #endif
 
@@ -153,14 +156,31 @@ struct ABG_Flags
 namespace abg_detail
 {
     
+extern uint8_t  contrast;
 extern uint16_t timer_counter;
 extern uint8_t  update_counter;
 extern uint8_t  update_every_n;
+extern uint8_t  update_every_n_denom;
 extern uint8_t  current_plane;
 #if defined(ABG_SYNC_THREE_PHASE)
-extern uint8_t  current_phase;
+extern uint8_t volatile current_phase;
 #endif
 extern bool volatile needs_display; // needs display work
+
+template<class T>
+inline uint8_t pgm_read_byte_inc(T const*& p)
+{
+    uint8_t r;
+    asm volatile("lpm %[r], %a[p]+\n" : [p] "+&z" (p), [r] "=&r" (r));
+    return r;
+}
+template<class T>
+inline uint8_t deref_inc(T const*& p)
+{
+    uint8_t r;
+    asm volatile("ld %[r], %a[p]+\n" : [p] "+&e" (p), [r] "=&r" (r) :: "memory");
+    return r;
+}
 
 void send_cmds_(uint8_t const* d, uint8_t n);
 void send_cmds_prog_(uint8_t const* d, uint8_t n);
@@ -171,23 +191,44 @@ template<uint8_t... CMDS> void send_cmds_prog()
     send_cmds_prog_(CMDS_, sizeof(CMDS_));
 }
 
-template<class... CMDS> void send_cmds(CMDS... cmds)
+inline void send_cmds_helper() {}
+
+template<class... CMDS>
+inline void send_cmds_helper(uint8_t first, CMDS... rest)
 {
+    Arduboy2Base::SPItransfer(first);
+    send_cmds_helper(rest...);
+}
+
+template<class... CMDS> inline void send_cmds(CMDS... cmds)
+{
+#if 1
     uint8_t const CMDS_[] = { cmds... };
     send_cmds_(CMDS_, sizeof(CMDS_));
+#else
+    Arduboy2Base::LCDCommandMode();
+    send_cmds_helper(cmds...);
+    Arduboy2Base::LCDDataMode();
+#endif
 }
 
 extern uint8_t const YMASK0[8] PROGMEM;
 extern uint8_t const YMASK1[8] PROGMEM;
 
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
 template<bool CLEAR>
 void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h);
+#else
+void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h, bool clear);
+#endif
 
 enum class SpriteMode : uint8_t
 {
     Overwrite,
     PlusMask,
     ExternalMask,
+    OverwriteFX,
+    PlusMaskFX,
 };
 
 template<SpriteMode SPRITE_MODE> void draw_sprite(
@@ -195,6 +236,12 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
     uint8_t w, uint8_t h,
     uint8_t const* image, uint8_t frame,
     uint8_t const* mask, uint8_t mask_frame);
+
+template<SpriteMode SPRITE_MODE> void draw_sprite_dispatch(
+    int16_t x, int16_t y,
+    uint8_t w, uint8_t h,
+    uint8_t pages,
+    uint8_t const* image, uint8_t const* mask);
 
 template<SpriteMode SPRITE_MODE> inline void draw_sprite(
     int16_t x, int16_t y,
@@ -234,6 +281,13 @@ struct ArduboyG_Common : public BASE
         TCCR3B = _BV(WGM33) | _BV(WGM32) | _BV(CS31) | _BV(CS30);
         TCNT3 = 0;
         bitWrite(TIMSK3, OCIE3A, 1);
+#elif defined(ABG_TIMER1)
+        // Fast PWM mode, prescaler /64
+        OCR1A = timer_counter;
+        TCCR1A = _BV(WGM11) | _BV(WGM10);
+        TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS11) | _BV(CS10);
+        TCNT1 = 0;
+        bitWrite(TIMSK1, OCIE1A, 1);
 #elif defined(ABG_TIMER4)
         // Fast PWM mode, prescaler /256
         TC4H = (timer_counter >> 8);
@@ -251,9 +305,15 @@ struct ArduboyG_Common : public BASE
     
     static void startGrey() { startGray(); }
     
-    static void setUpdateEveryN(uint8_t images)
+    // use this method to adjust contrast when using ABGMode::L4_Contrast
+    static void setContrast(uint8_t f) { contrast = f; }
+    
+    static void setUpdateEveryN(uint8_t num, uint8_t denom = 1)
     {
-        update_every_n = images;
+        update_every_n = num;
+        update_every_n_denom = denom;
+        if(update_counter >= update_every_n)
+            update_counter = 0;
     }
     
     static void setRefreshHz(uint8_t hz)
@@ -336,7 +396,17 @@ struct ArduboyG_Common : public BASE
         uint8_t w,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::drawFastHLine(x, y, w, planeColor(current_plane, color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            color = planeColor(current_plane, color);
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
+            if(color) fast_rect<false>(x, y, w, 1);
+            else      fast_rect<true >(x, y, w, 1);
+#else
+            fast_rect(x, y, w, 1, color == BLACK);
+#endif
+        }
+        else Arduboy2Base::drawFastHLine(x, y, w, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -345,7 +415,17 @@ struct ArduboyG_Common : public BASE
         uint8_t w,
         uint8_t color = WHITE)
     {
-        Arduboy2Base::drawFastHLine(x, y, w, planeColor<PLANE>(color));
+        if(FLAGS & ABG_Flags::OptimizeFillRect)
+        {
+            color = planeColor<PLANE>(color);
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
+            if(color) fast_rect<false>(x, y, w, 1);
+            else      fast_rect<true >(x, y, w, 1);
+#else
+            fast_rect(x, y, w, 1, color == BLACK);
+#endif
+        }
+        else Arduboy2Base::drawFastHLine(x, y, w, planeColor<PLANE>(color));
     }
     
     static void drawFastVLine(
@@ -356,8 +436,12 @@ struct ArduboyG_Common : public BASE
         if(FLAGS & ABG_Flags::OptimizeFillRect)
         {
             color = planeColor(current_plane, color);
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
             if(color) fast_rect<false>(x, y, 1, h);
             else      fast_rect<true >(x, y, 1, h);
+#else
+            fast_rect(x, y, 1, h, color == BLACK);
+#endif
         }
         else Arduboy2Base::drawFastVLine(x, y, h, planeColor(current_plane, color));
     }
@@ -371,8 +455,12 @@ struct ArduboyG_Common : public BASE
         if(FLAGS & ABG_Flags::OptimizeFillRect)
         {
             color = planeColor<PLANE>(color);
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
             if(color) fast_rect<false>(x, y, 1, h);
             else      fast_rect<true >(x, y, 1, h);
+#else
+            fast_rect(x, y, 1, h, color == BLACK);
+#endif
         }
         else Arduboy2Base::drawFastVLine(x, y, h, planeColor<PLANE>(color));
     }
@@ -524,8 +612,12 @@ struct ArduboyG_Common : public BASE
         if(FLAGS & ABG_Flags::OptimizeFillRect)
         {
             color = planeColor(current_plane, color);
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
             if(color) fast_rect<false>(x, y, w, h);
             else      fast_rect<true >(x, y, w, h);
+#else
+            fast_rect(x, y, w, h, color == BLACK);
+#endif
         }
         else Arduboy2Base::fillRect(x, y, w, h, planeColor(current_plane, color));
     }
@@ -539,8 +631,12 @@ struct ArduboyG_Common : public BASE
         if(FLAGS & ABG_Flags::OptimizeFillRect)
         {
             color = planeColor<PLANE>(color);
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
             if(color) fast_rect<false>(x, y, w, h);
             else      fast_rect<true >(x, y, w, h);
+#else
+            fast_rect(x, y, w, h, color == BLACK);
+#endif
         }
         else Arduboy2Base::fillRect(x, y, w, h, planeColor<PLANE>(color));
     }
@@ -595,16 +691,14 @@ struct ArduboyG_Common : public BASE
         }
     }
     
-    void drawOverwrite(
+    void drawOverwriteMonochrome(
         int16_t x, int16_t y,
         uint8_t w, uint8_t h,
         uint8_t const* bitmap)
     {
-        static_assert(MODE != ABG_Mode::L4_Triplane,
-            "drawOverwrite does not support L4_Triplane mode");
         static_assert(FLAGS & ABG_Flags::OptimizeDrawOverwrite,
-            "Sized drawOverwrite requires ABG_Flags::OptimizeDrawOverwrite");
-        draw_sprite<SpriteMode::Overwrite>(x, y, w, h, bitmap, 0, nullptr, 0);
+            "drawOverwriteMonochrome requires ABG_Flags::OptimizeDrawOverwrite");
+        draw_sprite_dispatch<SpriteMode::Overwrite>(x, y, w, h, (h + 7) / 8, bitmap, nullptr);
     }
     
     void drawPlusMask(
@@ -615,16 +709,6 @@ struct ArduboyG_Common : public BASE
         static_assert(MODE != ABG_Mode::L4_Triplane,
             "drawOverwrite does not support L4_Triplane mode");
         draw_sprite<SpriteMode::PlusMask>(x, y, bitmap, frame, nullptr, 0);
-    }
-    
-    void drawPlusMask(
-        int16_t x, int16_t y,
-        uint8_t w, uint8_t h,
-        uint8_t const* bitmap)
-    {
-        static_assert(MODE != ABG_Mode::L4_Triplane,
-            "drawPlusMask does not support L4_Triplane mode");
-        draw_sprite<SpriteMode::PlusMask>(x, y, w, h, bitmap, 0, nullptr, 0);
     }
 
     void drawExternalMask(
@@ -666,34 +750,49 @@ struct ArduboyG_Common : public BASE
     {
         if(update_counter >= update_every_n)
         {
-            update_counter = 0;
-            ++BASE::frameCount; // to allow everyXFrames
+            update_counter -= update_every_n;
             return true;
         }
         return false;
     }
     
+    static void waitForNextPlane()
+    {
+        do
+        {
+            cli();
+            for(;;)
+            {
+                if(needs_display)
+                    break;
+                sleep_enable();
+                sei();
+                sleep_cpu();
+                sleep_disable();
+                cli();
+            }
+            needs_display = false;
+            sei();
+            doDisplay();
+        }
+#if defined(ABG_SYNC_THREE_PHASE)
+        while(current_phase != 3);
+#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
+        while(0);
+#endif
+    }
+    
     static bool nextFrame()
     {
-        if(!needs_display) return false;
-        needs_display = false;
-        doDisplay();
-#if defined(ABG_SYNC_THREE_PHASE)
-        return current_phase == 3;
-#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
+        waitForNextPlane();
         return true;
-#endif
     }
     static bool nextFrameDEV()
     {
-        bool r = nextFrame();
-        if(needs_display)
-            TXLED1;
-        else
-            TXLED0;
-        return r;
+        waitForNextPlane();
+        return true;
     }
-    
+        
     ABG_NOT_SUPPORTED static void flipVertical();
     ABG_NOT_SUPPORTED static void paint8Pixels(uint8_t);
     ABG_NOT_SUPPORTED static void paintScreen(uint8_t const*);
@@ -703,6 +802,17 @@ struct ArduboyG_Common : public BASE
     ABG_NOT_SUPPORTED static void display();
     ABG_NOT_SUPPORTED static void display(bool);
 
+    // expose internal Arduboy2Core methods
+    static void setCPUSpeed8MHz() { BASE::setCPUSpeed8MHz(); }
+    static void bootSPI        () { BASE::bootSPI        (); }
+    static void bootOLED       () { BASE::bootOLED       (); }
+    static void bootPins       () { BASE::bootPins       (); }
+    static void bootPowerSaving() { BASE::bootPowerSaving(); }
+    
+    // color conversion method
+    static uint8_t color (uint8_t c) { return planeColor(current_plane, c); }
+    static uint8_t colour(uint8_t c) { return planeColor(current_plane, c); }
+    
 protected:
     
     static void doDisplay()
@@ -710,18 +820,19 @@ protected:
         uint8_t* b = getBuffer();
         
 #if defined(ABG_SYNC_THREE_PHASE)
-        if(current_phase == 1)
+        uint8_t phase = current_phase;
+        if(phase == 1)
         {
             if(MODE == ABG_Mode::L4_Contrast)
-                send_cmds(0x81, (current_plane & 1) ? 0xf0 : 0x70);
+                send_cmds(0x81, (current_plane & 1) ? contrast : contrast / 2);
             send_cmds_prog<0xA8, 7, 0x22, 0, 7>();
         }
-        else if(current_phase == 2)
+        else if(phase == 2)
         {
             paint(&b[128 * 7], false, 1, 0xf0);
             send_cmds_prog<0x22, 0, 7>();
         }
-        else if(current_phase == 3)
+        else if(phase == 3)
         {
             send_cmds_prog<0x22, 0, 7>();
             paint(&b[128 * 7], false, 1, 0xff);
@@ -737,11 +848,11 @@ protected:
             else
                 current_plane = !current_plane;
             if(current_plane == 0)
-                ++update_counter;
+                update_counter += update_every_n_denom;
         }
 #elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
         if(MODE == ABG_Mode::L4_Contrast)
-            send_cmds(0x81, (current_plane & 1) ? 0xf0 : 0x70);
+            send_cmds(0x81, (current_plane & 1) ? contrast : contrast / 2);
 #if defined(ABG_SYNC_PARK_ROW)
         paint(&b[128 * 7], true, 1, 0x7f);
         send_cmds_prog<0xA8, 63>();
@@ -773,7 +884,7 @@ protected:
         else
             current_plane = !current_plane;
         if(current_plane == 0)
-            ++update_counter;
+            update_counter += update_every_n_denom;
 #endif
     }
     
@@ -789,18 +900,18 @@ protected:
             "   mov   r16, __zero_reg__         ;1        \n\t" //    tmp2 = 0;
             "   st    %a[ptr], r16              ;2        \n\t" //*(image) = tmp2
             "   subi  r16, 0                    ;1        \n\t" //[delay]
-            "   sbiw  %a[count], 0              ;2        \n\t" //[delay]
-            "   sbiw  %a[count], 0              ;2        \n\t" //[delay]
+            "   sbiw  %A[count], 0              ;2        \n\t" //[delay]
+            "   sbiw  %A[count], 0              ;2        \n\t" //[delay]
             "   and   __tmp_reg__, %[mask]      ;1        \n\t" //tmp &= mask
             "   out   %[spdr], __tmp_reg__      ;1        \n\t" //SPDR = tmp
-            "   sbiw  %a[count], 1              ;2        \n\t" //len--
+            "   sbiw  %A[count], 1              ;2        \n\t" //len--
             "   brne  1b                        ;1/2 :18  \n\t" //len > 0
             "   in    __tmp_reg__, %[spsr]                \n\t" //read SPSR to clear SPIF
-            "   sbiw  %a[count], 0                        \n\t"
-            "   sbiw  %a[count], 0                        \n\t" // delay before resetting DORD
-            "   sbiw  %a[count], 0                        \n\t" // below so it doesn't mess up
-            "   sbiw  %a[count], 0                        \n\t" // the last transfer
-            "   sbiw  %a[count], 0                        \n\t"
+            "   sbiw  %A[count], 0                        \n\t"
+            "   sbiw  %A[count], 0                        \n\t" // delay before resetting DORD
+            "   sbiw  %A[count], 0                        \n\t" // below so it doesn't mess up
+            "   sbiw  %A[count], 0                        \n\t" // the last transfer
+            "   sbiw  %A[count], 0                        \n\t"
             : [ptr]     "+&e" (image),
               [count]   "+&w" (count)
             : [spdr]    "I"   (_SFR_IO_ADDR(SPDR)),
@@ -930,19 +1041,30 @@ namespace abg_detail
 #if !defined(ABG_UPDATE_EVERY_N_DEFAULT)
 #define ABG_UPDATE_EVERY_N_DEFAULT 1
 #endif
+#if !defined(ABG_UPDATE_EVERY_N_DENOM_DEFAULT)
+#define ABG_UPDATE_EVERY_N_DENOM_DEFAULT 1
+#endif
+#if !defined(ABG_FPS_DEFAULT)
+#define ABG_FPS_DEFAULT 135
+#endif
+#if !defined(ABG_CONTRAST_DEFAULT)
+#define ABG_CONTRAST_DEFAULT 255
+#endif
 
-#if defined(ABG_TIMER3)
-uint16_t timer_counter = F_CPU / 64 / 135;
+#if defined(ABG_TIMER3) || defined(ABG_TIMER1)
+uint16_t timer_counter = F_CPU / 64 / ABG_FPS_DEFAULT;
 #elif defined(ABG_TIMER4)
-uint16_t timer_counter = F_CPU / 256 / 135;
+uint16_t timer_counter = F_CPU / 256 / ABG_FPS_DEFAULT;
 #endif
 uint8_t  update_counter;
 uint8_t  update_every_n = ABG_UPDATE_EVERY_N_DEFAULT;
+uint8_t  update_every_n_denom = ABG_UPDATE_EVERY_N_DENOM_DEFAULT;
 uint8_t  current_plane;
 #if defined(ABG_SYNC_THREE_PHASE)
-uint8_t  current_phase;
+uint8_t volatile current_phase;
 #endif
 bool volatile needs_display;
+uint8_t contrast = ABG_CONTRAST_DEFAULT;
 
 void send_cmds_(uint8_t const* d, uint8_t n)
 {
@@ -954,8 +1076,8 @@ void send_cmds_(uint8_t const* d, uint8_t n)
 void send_cmds_prog_(uint8_t const* d, uint8_t n)
 {
     Arduboy2Base::LCDCommandMode();
-    while(n-- != 0)
-        Arduboy2Base::SPItransfer(pgm_read_byte(d++));
+    do Arduboy2Base::SPItransfer(pgm_read_byte_inc(d));
+    while(--n != 0);
     Arduboy2Base::LCDDataMode();
 }
 
@@ -968,12 +1090,16 @@ uint8_t const YMASK1[8] PROGMEM =
     0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff
 };
 
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
 template<bool CLEAR>
 void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
+#else
+void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h, bool CLEAR)
+#endif
 {
     if(y >=  64) return;
     if(x >= 128) return;
-    if(w == 0 || h == 0) return;
+    if((w & h) == 0) return;
     if(y + h <= 0) return;
     if(x + w <= 0) return;
     
@@ -988,6 +1114,8 @@ void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
         w += int8_t(x);
         x0 = 0;
     }
+    if(x0 + w > 128)
+        w = 128 - x0;
 
     uint8_t t0 = y0 & 0xf8;
     uint8_t t1 = y1 & 0xf8;
@@ -1038,8 +1166,10 @@ void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
     }
 }
 
+#ifdef ABG_FAST_RECT_STATIC_DISPATCH
 template void fast_rect<true >(int16_t x, int16_t y, uint8_t w, uint8_t h);
 template void fast_rect<false>(int16_t x, int16_t y, uint8_t w, uint8_t h);
+#endif
 
 template<SpriteMode SPRITE_MODE> void draw_sprite(
     int16_t x, int16_t y,
@@ -1053,7 +1183,6 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
     if(image == nullptr) return;
     if(SPRITE_MODE == SpriteMode::ExternalMask && mask == nullptr) return;
 
-    
     uint8_t pages = h;
     asm volatile(
         "lsr %[pages]\n"
@@ -1078,6 +1207,15 @@ template<SpriteMode SPRITE_MODE> void draw_sprite(
             image += plane_bytes * frame * 3;
     }
     
+    draw_sprite_dispatch<SPRITE_MODE>(x, y, w, h, pages, image, mask);
+}
+
+template<SpriteMode SPRITE_MODE> void draw_sprite_dispatch(
+    int16_t x, int16_t y,
+    uint8_t w, uint8_t h,
+    uint8_t pages,
+    uint8_t const* image, uint8_t const* mask)
+{
     uint8_t shift_coef;
     uint16_t shift_mask;
     {
@@ -1602,9 +1740,26 @@ template void draw_sprite<SpriteMode::ExternalMask>(
     uint8_t const* image, uint8_t frame,
     uint8_t const* mask, uint8_t mask_frame);
 
+template void draw_sprite_dispatch<SpriteMode::Overwrite>(
+    int16_t x, int16_t y,
+    uint8_t w, uint8_t h,
+    uint8_t pages,
+    uint8_t const* image, uint8_t const* mask);
+template void draw_sprite_dispatch<SpriteMode::PlusMask>(
+    int16_t x, int16_t y,
+    uint8_t w, uint8_t h,
+    uint8_t pages,
+    uint8_t const* image, uint8_t const* mask);
+template void draw_sprite_dispatch<SpriteMode::ExternalMask>(
+    int16_t x, int16_t y,
+    uint8_t w, uint8_t h,
+    uint8_t pages,
+    uint8_t const* image, uint8_t const* mask);
+
 }
 
 #if defined(ABG_TIMER3)
+
 ISR(TIMER3_COMPA_vect)
 {
     using namespace abg_detail;
@@ -1622,7 +1777,29 @@ ISR(TIMER3_COMPA_vect)
 #endif
     needs_display = true;
 }
+
+#elif defined(ABG_TIMER1)
+
+ISR(TIMER1_COMPA_vect)
+{
+    using namespace abg_detail;
+#if defined(ABG_SYNC_THREE_PHASE)
+    if(++current_phase >= 4)
+        current_phase = 1;
+    if(current_phase == 1)
+        OCR1A = (timer_counter >> 4) + 1; // phase 2 delay: 4 lines
+    else if(current_phase == 2)
+        OCR1A = timer_counter;            // phase 3 delay: 64 lines
+    else if(current_phase == 3)
+        OCR1A = (timer_counter >> 4) + 1; // phase 1 delay: 4 lines
+#elif defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
+    OCR1A = timer_counter;
+#endif
+    needs_display = true;
+}
+
 #elif defined(ABG_TIMER4)
+
 ISR(TIMER4_OVF_vect)
 {
     using namespace abg_detail;
@@ -1644,6 +1821,7 @@ ISR(TIMER4_OVF_vect)
 #endif
     needs_display = true;
 }
+
 #endif
 
 #endif // ABG_IMPLEMENTATION
