@@ -99,16 +99,7 @@ void SpritesU::drawBasic(
     
     uint16_t w_and_h = (uint16_t(h) << 8) | w;
     
-#if 0
-    if(frame != 0)
-    {
-        uint8_t tmp = h >> 3;
-        if(mode & 1) tmp *= 2;
-        uint16_t tmp2 = tmp * w;
-        tmp2 = tmp2 * frame;
-        image += tmp2;
-    }
-#else
+#if ARDUINO_ARCH_AVR
     uint16_t tmp, tmp2;
     asm volatile(R"ASM(
             cp   %A[frame], __zero_reg__
@@ -145,6 +136,15 @@ void SpritesU::drawBasic(
         [mode]  "r"   (mode),
         [w]     "r"   (w)
         );
+#else
+    if(frame != 0)
+    {
+        uint8_t tmp = h >> 3;
+        if(mode & 1) tmp *= 2;
+        uint16_t tmp2 = tmp * w;
+        tmp2 = tmp2 * frame;
+        image += tmp2;
+    }
 #endif
 
     drawBasicNoChecks(w_and_h, image, mode, x, y);
@@ -169,7 +169,7 @@ void SpritesU::drawBasicNoChecks(
     uint16_t image_adv;
     uint8_t* buf = Arduboy2Base::sBuffer;
     
-#if 1
+#if ARDUINO_ARCH_AVR
     asm volatile(R"ASM(
             mov  %[col_start], %A[x]
             clr  %[bottom]
@@ -292,11 +292,7 @@ void SpritesU::drawBasicNoChecks(
     bottom = false;
     cols = w;
 
-    asm volatile(
-        "lsr %[pages]\n"
-        "lsr %[pages]\n"
-        "lsr %[pages]\n"
-        : [pages] "+&r" (pages));
+    pages >>= 3;
 
     if(frame != 0)
     {
@@ -312,14 +308,7 @@ void SpritesU::drawBasicNoChecks(
     shift_mask = ~(0xff * shift_coef);
 
     // y /= 8 (round to -inf)
-    asm volatile(
-        "asr %B[y]\n"
-        "ror %A[y]\n"
-        "asr %B[y]\n"
-        "ror %A[y]\n"
-        "asr %B[y]\n"
-        "ror %A[y]\n"
-        : [y] "+&r" (y));
+    y >>= 3;
     
     // clip against top edge
     page_start = int8_t(y);
@@ -341,20 +330,7 @@ void SpritesU::drawBasicNoChecks(
         col_start = 0;
     }
 
-    asm volatile(
-        "mulsu %[page_start], %[c128]\n"
-        "add %A[buf], r0\n"
-        "adc %B[buf], r1\n"
-        "clr __zero_reg__\n"
-        "add %A[buf], %[col_start]\n"
-        "adc %B[buf], __zero_reg__\n"
-        :
-        [buf]        "+&x" (buf)
-        :
-        [page_start] "a"   (page_start),
-        [col_start]  "r"   (col_start),
-        [c128]       "a"   ((uint8_t)128)
-        );
+    buf += page_start * 128 + col_start;
 
     // clip against right edge
     {
@@ -388,6 +364,7 @@ void SpritesU::drawBasicNoChecks(
     if(mode == MODE_OVERWRITE)
     {
         uint8_t const* image_ptr = (uint8_t const*)image;
+#if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
                 cpi %[page_start], 0
@@ -505,6 +482,9 @@ void SpritesU::drawBasicNoChecks(
             :
             "r28", "r29", "memory"
             );
+#else
+        // TODO: C implementation
+#endif
     }
     else
 #endif
@@ -512,6 +492,7 @@ void SpritesU::drawBasicNoChecks(
     if(mode & 2)
     {
         uint8_t const* image_ptr = (uint8_t const*)image;
+#if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
                 cpi %[page_start], 0
@@ -649,6 +630,9 @@ void SpritesU::drawBasicNoChecks(
             :
             "r28", "r29", "memory"
             );
+#else
+        // TODO: C implementation
+#endif
     }
     else
 #endif
@@ -657,6 +641,7 @@ void SpritesU::drawBasicNoChecks(
         uint8_t* bufn;
         uint8_t reseek = (w != cols);
         image += ((uint24_t)FX::programDataPage << 8);
+#if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
                 rjmp L%=_begin
@@ -670,25 +655,26 @@ void SpritesU::drawBasicNoChecks(
                 add %A[image], %A[image_adv]
                 adc %B[image], %B[image_adv]
                 adc %C[image], __zero_reg__
-                in r0, %[spsr]
-                sbrs r0, %[spif]
-                rjmp .-6
+                rcall L%=_delay_14
                 out %[spdr], %C[image]
-                in r0, %[spsr]
-                sbrs r0, %[spif]
-                rjmp .-6
+                rcall L%=_delay_17
                 out %[spdr], %B[image]
-                in r0, %[spsr]
-                sbrs r0, %[spif]
-                rjmp .-6
+                rcall L%=_delay_17
                 out %[spdr], %A[image]
-                in r0, %[spsr]
-                sbrs r0, %[spif]
-                rjmp .-6
+                rcall L%=_delay_17
                 out %[spdr], __zero_reg__
-                in r0, %[spsr]
-                sbrs r0, %[spif]
-                rjmp .-6
+                rcall L%=_delay_10
+                ret
+                
+            L%=_delay_17:
+                lpm
+            L%=_delay_14:
+                lpm
+            L%=_delay_11:
+                nop
+            L%=_delay_10:
+                lpm
+            L%=_delay_7:
                 ret
 
             L%=_begin:
@@ -937,6 +923,9 @@ void SpritesU::drawBasicNoChecks(
             :
             "memory"
             );
+#else
+        // TODO: C implementation
+#endif
     }
 #endif
     {} // empty final else block, if needed
@@ -947,10 +936,15 @@ void SpritesU::drawOverwrite(
     int16_t x, int16_t y, uint8_t const* image, uint16_t frame)
 {
     uint8_t w, h;
+#if ARDUINO_ARCH_AVR
     asm volatile(
         "lpm %[w], Z+\n"
         "lpm %[h], Z+\n"
         : [w] "=r" (w), [h] "=r" (h), [image] "+z" (image));
+#else
+    w = pgm_read_byte(image++);
+    h = pgm_read_byte(image++);
+#endif
     drawBasic(x, y, w, h, (uint24_t)image, frame, MODE_OVERWRITE);
 }
 void SpritesU::drawOverwrite(
@@ -965,10 +959,15 @@ void SpritesU::drawPlusMask(
     int16_t x, int16_t y, uint8_t const* image, uint16_t frame)
 {
     uint8_t w, h;
+#if ARDUINO_ARCH_AVR
     asm volatile(
         "lpm %[w], Z+\n"
         "lpm %[h], Z+\n"
         : [w] "=r" (w), [h] "=r" (h), [image] "+z" (image));
+#else
+    w = pgm_read_byte(image++);
+    h = pgm_read_byte(image++);
+#endif
     drawBasic(x, y, w, h, (uint24_t)image, frame, MODE_PLUSMASK);
 }
 void SpritesU::drawPlusMask(
@@ -1073,6 +1072,7 @@ void SpritesU::fillRect_i8(int8_t x, int8_t y, uint8_t w, uint8_t h, uint8_t col
 
     uint8_t r0 = yc;
     uint8_t r1 = y1 - 1;
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(
         "lsr %[r0]\n"
         "lsr %[r0]\n"
@@ -1082,8 +1082,13 @@ void SpritesU::fillRect_i8(int8_t x, int8_t y, uint8_t w, uint8_t h, uint8_t col
         "lsr %[r1]\n"
         : [r0] "+&r" (r0),
           [r1] "+&r" (r1));
+#else
+    r0 >>= 3;
+    r1 >>= 3;
+#endif
 
     uint8_t* buf = Arduboy2Base::sBuffer;
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(
         "mul %[r0], %[c128]\n"
         "add %A[buf], r0\n"
@@ -1098,6 +1103,9 @@ void SpritesU::fillRect_i8(int8_t x, int8_t y, uint8_t w, uint8_t h, uint8_t col
         [x]    "r"   (xc),
         [c128] "r"   ((uint8_t)128)
         );
+#else
+    buf += r0 * 128 + xc;
+#endif
 
     uint8_t rows = r1 - r0; // middle rows + 1
     uint8_t f = 0;
@@ -1110,6 +1118,7 @@ void SpritesU::fillRect_i8(int8_t x, int8_t y, uint8_t w, uint8_t h, uint8_t col
     uint8_t col;
     uint8_t buf_adv = 128 - w;
 
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(R"ASM(
             tst  %[rows]
             brne L%=_top
@@ -1182,6 +1191,9 @@ void SpritesU::fillRect_i8(int8_t x, int8_t y, uint8_t w, uint8_t h, uint8_t col
         [c1]      "r"   (c1),
         [bot]     "r"   (bot)
         );
+#else
+    // TODO: C implementation
+#endif
 }
 #endif
 
