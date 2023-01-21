@@ -26,6 +26,10 @@ Default Template Configuration:
     ArduboyGBase a;
     ArduboyG     a;
 
+    Both are configured with:
+        ABG_Mode::L3
+        ABG_Flags::None
+
 Custom Template Configuration:
 
     ArduboyGBase_Config<ABG_Mode::L3, ABG_Flags:None> a;
@@ -101,6 +105,26 @@ Example Usage:
 #define ABG_TIMER3
 #endif
 
+#if !defined(ABG_UPDATE_EVERY_N_DEFAULT)
+#define ABG_UPDATE_EVERY_N_DEFAULT 1
+#endif
+#if !defined(ABG_UPDATE_EVERY_N_DENOM_DEFAULT)
+#define ABG_UPDATE_EVERY_N_DENOM_DEFAULT 1
+#endif
+#if !defined(ABG_FPS_DEFAULT)
+#define ABG_FPS_DEFAULT 156
+#endif
+#if !defined(ABG_CONTRAST_DEFAULT)
+#define ABG_CONTRAST_DEFAULT 255
+#endif
+
+#if !defined(ABG_PRECHARGE_CYCLES)
+#define ABG_PRECHARGE_CYCLES 1
+#endif
+#if !defined(ABG_DISCHARGE_CYCLES)
+#define ABG_DISCHARGE_CYCLES 2
+#endif
+
 #undef BLACK
 #undef WHITE
 constexpr uint8_t BLACK      = 0;
@@ -126,14 +150,8 @@ struct ABG_Flags
     enum
     {
         None = 0,
-        OptimizeFillRect         = (1 << 0),
-        OptimizeDrawOverwrite    = (1 << 1),
-        OptimizeDrawExternalMask = (1 << 2),
         
         Default =
-            OptimizeFillRect         |
-            OptimizeDrawOverwrite    |
-            OptimizeDrawExternalMask |
             0,
     };
 };
@@ -144,13 +162,6 @@ struct ABG_Flags
 #else
 // will still cause linker error
 #define ABG_NOT_SUPPORTED
-#endif
-
-#if !defined(ABG_PRECHARGE_CYCLES)
-#define ABG_PRECHARGE_CYCLES 3
-#endif
-#if !defined(ABG_DISCHARGE_CYCLES)
-#define ABG_DISCHARGE_CYCLES 1
 #endif
 
 namespace abg_detail
@@ -165,7 +176,7 @@ extern uint8_t  current_plane;
 #if defined(ABG_SYNC_THREE_PHASE)
 extern uint8_t volatile current_phase;
 #endif
-extern bool volatile needs_display; // needs display work
+extern bool volatile needs_display;
 
 template<class T>
 inline uint8_t pgm_read_byte_inc(T const*& p)
@@ -211,16 +222,6 @@ template<class... CMDS> inline void send_cmds(CMDS... cmds)
     Arduboy2Base::LCDDataMode();
 #endif
 }
-
-extern uint8_t const YMASK0[8] PROGMEM;
-extern uint8_t const YMASK1[8] PROGMEM;
-
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-template<bool CLEAR>
-void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h);
-#else
-void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h, bool clear);
-#endif
 
 template<
     class    BASE,
@@ -272,7 +273,12 @@ struct ArduboyG_Common : public BASE
     static void startGrey() { startGray(); }
     
     // use this method to adjust contrast when using ABGMode::L4_Contrast
-    static void setContrast(uint8_t f) { contrast = f; }
+    static void setContrast(uint8_t f)
+    {
+        // have compiler optimize out assignment if it's not needed
+        if(MODE == ABG_Mode::L4_Contrast)
+            contrast = f;
+    }
     
     static void setUpdateEveryN(uint8_t num, uint8_t denom = 1)
     {
@@ -362,17 +368,7 @@ struct ArduboyG_Common : public BASE
         uint8_t w,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            color = planeColor(current_plane, color);
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-            if(color) fast_rect<false>(x, y, w, 1);
-            else      fast_rect<true >(x, y, w, 1);
-#else
-            fast_rect(x, y, w, 1, color == BLACK);
-#endif
-        }
-        else Arduboy2Base::drawFastHLine(x, y, w, planeColor(current_plane, color));
+        Arduboy2Base::drawFastHLine(x, y, w, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -381,17 +377,7 @@ struct ArduboyG_Common : public BASE
         uint8_t w,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            color = planeColor<PLANE>(color);
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-            if(color) fast_rect<false>(x, y, w, 1);
-            else      fast_rect<true >(x, y, w, 1);
-#else
-            fast_rect(x, y, w, 1, color == BLACK);
-#endif
-        }
-        else Arduboy2Base::drawFastHLine(x, y, w, planeColor<PLANE>(color));
+        Arduboy2Base::drawFastHLine(x, y, w, planeColor<PLANE>(color));
     }
     
     static void drawFastVLine(
@@ -399,17 +385,7 @@ struct ArduboyG_Common : public BASE
         uint8_t h,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            color = planeColor(current_plane, color);
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-            if(color) fast_rect<false>(x, y, 1, h);
-            else      fast_rect<true >(x, y, 1, h);
-#else
-            fast_rect(x, y, 1, h, color == BLACK);
-#endif
-        }
-        else Arduboy2Base::drawFastVLine(x, y, h, planeColor(current_plane, color));
+        Arduboy2Base::drawFastVLine(x, y, h, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -418,17 +394,7 @@ struct ArduboyG_Common : public BASE
         uint8_t h,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            color = planeColor<PLANE>(color);
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-            if(color) fast_rect<false>(x, y, 1, h);
-            else      fast_rect<true >(x, y, 1, h);
-#else
-            fast_rect(x, y, 1, h, color == BLACK);
-#endif
-        }
-        else Arduboy2Base::drawFastVLine(x, y, h, planeColor<PLANE>(color));
+        Arduboy2Base::drawFastVLine(x, y, h, planeColor<PLANE>(color));
     }
     
     static void drawLine(
@@ -489,14 +455,7 @@ struct ArduboyG_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            drawFastHLine(x, y, w, color);
-            drawFastHLine(x, y+h-1, w, color);
-            drawFastVLine(x, y, h, color);
-            drawFastVLine(x+w-1, y, h, color);
-        }
-        else Arduboy2Base::drawRect(x, y, w, h, planeColor(current_plane, color));
+        Arduboy2Base::drawRect(x, y, w, h, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -505,14 +464,7 @@ struct ArduboyG_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            drawFastHLine<PLANE>(x, y, w, color);
-            drawFastHLine<PLANE>(x, y+h-1, w, color);
-            drawFastVLine<PLANE>(x, y, h, color);
-            drawFastVLine<PLANE>(x+w-1, y, h, color);
-        }
-        else Arduboy2Base::drawRect(x, y, w, h, planeColor<PLANE>(color));
+        Arduboy2Base::drawRect(x, y, w, h, planeColor<PLANE>(color));
     }
     
     static void drawRoundRect(
@@ -575,17 +527,7 @@ struct ArduboyG_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            color = planeColor(current_plane, color);
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-            if(color) fast_rect<false>(x, y, w, h);
-            else      fast_rect<true >(x, y, w, h);
-#else
-            fast_rect(x, y, w, h, color == BLACK);
-#endif
-        }
-        else Arduboy2Base::fillRect(x, y, w, h, planeColor(current_plane, color));
+        Arduboy2Base::fillRect(x, y, w, h, planeColor(current_plane, color));
     }
     
     template<uint8_t PLANE>
@@ -594,17 +536,7 @@ struct ArduboyG_Common : public BASE
         uint8_t w, uint8_t h,
         uint8_t color = WHITE)
     {
-        if(FLAGS & ABG_Flags::OptimizeFillRect)
-        {
-            color = planeColor<PLANE>(color);
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-            if(color) fast_rect<false>(x, y, w, h);
-            else      fast_rect<true >(x, y, w, h);
-#else
-            fast_rect(x, y, w, h, color == BLACK);
-#endif
-        }
-        else Arduboy2Base::fillRect(x, y, w, h, planeColor<PLANE>(color));
+        Arduboy2Base::fillRect(x, y, w, h, planeColor<PLANE>(color));
     }
     
     static void fillRoundRect(
@@ -822,8 +754,6 @@ protected:
             : [spdr]    "I"   (_SFR_IO_ADDR(SPDR)),
               [spsr]    "I"   (_SFR_IO_ADDR(SPSR)),
               [spcr]    "I"   (_SFR_IO_ADDR(SPCR)),
-              [clear]   "r"   (clear),
-              [mask]    "r"   (mask),
               [DORD1]   "i"   (_BV(SPE) | _BV(MSTR) | _BV(DORD)),
               [DORD2]   "i"   (_BV(SPE) | _BV(MSTR))
             );
@@ -944,19 +874,6 @@ using ArduboyG     = ArduboyG_Config<>;
 namespace abg_detail
 {
 
-#if !defined(ABG_UPDATE_EVERY_N_DEFAULT)
-#define ABG_UPDATE_EVERY_N_DEFAULT 1
-#endif
-#if !defined(ABG_UPDATE_EVERY_N_DENOM_DEFAULT)
-#define ABG_UPDATE_EVERY_N_DENOM_DEFAULT 1
-#endif
-#if !defined(ABG_FPS_DEFAULT)
-#define ABG_FPS_DEFAULT 156
-#endif
-#if !defined(ABG_CONTRAST_DEFAULT)
-#define ABG_CONTRAST_DEFAULT 255
-#endif
-
 #if defined(ABG_TIMER3) || defined(ABG_TIMER1)
 uint16_t timer_counter = F_CPU / 64 / ABG_FPS_DEFAULT;
 #elif defined(ABG_TIMER4)
@@ -986,96 +903,6 @@ void send_cmds_prog_(uint8_t const* d, uint8_t n)
     while(--n != 0);
     Arduboy2Base::LCDDataMode();
 }
-
-uint8_t const YMASK0[8] PROGMEM =
-{
-    0xff, 0xfe, 0xfc, 0xf8, 0xf0, 0xe0, 0xc0, 0x80
-};
-uint8_t const YMASK1[8] PROGMEM =
-{
-    0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff
-};
-
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-template<bool CLEAR>
-void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h)
-#else
-void fast_rect(int16_t x, int16_t y, uint8_t w, uint8_t h, bool CLEAR)
-#endif
-{
-    if(y >=  64) return;
-    if(x >= 128) return;
-    if((w & h) == 0) return;
-    if(y + h <= 0) return;
-    if(x + w <= 0) return;
-    
-    uint8_t y0 = (y < 0 ? 0 : uint8_t(y));
-    h = (h >  64 ?  64 : h);
-    uint8_t y1 = y + h;
-    y1 = (y1 > 64 ? 64 : y1) - 1;
-    
-    uint8_t x0 = x;
-    if(x < 0)
-    {
-        w += int8_t(x);
-        x0 = 0;
-    }
-    if(x0 + w > 128)
-        w = 128 - x0;
-
-    uint8_t t0 = y0 & 0xf8;
-    uint8_t t1 = y1 & 0xf8;
-    uint8_t m0 = pgm_read_byte(&YMASK0[y0 & 7]);
-    uint8_t m1 = pgm_read_byte(&YMASK1[y1 & 7]);
-
-    uint8_t* p = &Arduboy2Base::sBuffer[t0 * (128 / 8) + x0];
-    uint8_t advance = 128 - w;
-
-    if(t0 == t1)
-    {
-        uint8_t m = m0 & m1;
-        if(CLEAR) m = ~m;
-        for(uint8_t n = w; n != 0; --n)
-        {
-            if(CLEAR) *p++ &= m;
-            else      *p++ |= m;
-        }
-        return;
-    }
-
-    {
-        uint8_t m = m0;
-        if(CLEAR) m = ~m;
-        for(uint8_t n = w; n != 0; --n)
-        {
-            if(CLEAR) *p++ &= m;
-            else      *p++ |= m;
-        }
-        p += advance;
-    }
-
-    for(int8_t t = t1 - t0 - 8; t > 0; t -= 8)
-    {
-        for(uint8_t n = w; n != 0; --n)
-            *p++ = (CLEAR ? 0x00 : 0xff);
-        p += advance;
-    }
-
-    {
-        uint8_t m = m1;
-        if(CLEAR) m = ~m;
-        for(uint8_t n = w; n != 0; --n)
-        {
-            if(CLEAR) *p++ &= m;
-            else      *p++ |= m;
-        }
-    }
-}
-
-#ifdef ABG_FAST_RECT_STATIC_DISPATCH
-template void fast_rect<true >(int16_t x, int16_t y, uint8_t w, uint8_t h);
-template void fast_rect<false>(int16_t x, int16_t y, uint8_t w, uint8_t h);
-#endif
 
 }
 
