@@ -638,24 +638,32 @@ void SpritesU::drawBasicNoChecks(
 #endif
 #ifdef SPRITESU_FX
     {
+        uint8_t sfc_read;
         uint8_t* bufn;
-        uint8_t reseek = (w != cols);
-        image += ((uint24_t)FX::programDataPage << 8);
+        uint8_t reseek;
 #if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
+                lds r0, %[page]+0            ; 2
+                add %B[image], r0            ; 1
+                lds r0, %[page]+1            ; 2
+                adc %C[image], r0            ; 1
                 rjmp L%=_begin
 
             L%=_seek:
 
                 ; seek subroutine
                 cbi %[fxport], %[fxbit]
-                nop
+                ldi %[sfc_read], %[SFC_READ]
                 out %[spdr], %[sfc_read]
-                add %A[image], %A[image_adv]
-                adc %B[image], %B[image_adv]
-                adc %C[image], __zero_reg__
-                rcall L%=_delay_14
+                add %A[image], %A[image_adv] ;  1
+                adc %B[image], %B[image_adv] ;  1
+                adc %C[image], __zero_reg__  ;  1
+                clr %[reseek]                ;  1
+                cp  %[w], %[cols]            ;  1
+                breq .+2                     ;  1
+                inc %[reseek]                ;  1
+                rcall L%=_delay_14           ; 10
                 out %[spdr], %C[image]
                 rcall L%=_delay_17
                 out %[spdr], %B[image]
@@ -663,16 +671,15 @@ void SpritesU::drawBasicNoChecks(
                 out %[spdr], %A[image]
                 rcall L%=_delay_17
                 out %[spdr], __zero_reg__
-                rcall L%=_delay_10
+                rcall L%=_delay_13
                 ret
                 
             L%=_delay_17:
                 lpm
             L%=_delay_14:
-                lpm
-            L%=_delay_11:
                 nop
-            L%=_delay_10:
+            L%=_delay_13:
+                lpm
                 lpm
             L%=_delay_7:
                 ret
@@ -711,7 +718,7 @@ void SpritesU::drawBasicNoChecks(
                 or %[buf_data], r1
                 st %a[buf]+, %[buf_data]
                 lpm
-                adiw r24, 0
+                rjmp .+0
                 dec %[count]
                 brne L%=_top_loop
                 rjmp L%=_top_loop_done
@@ -722,11 +729,7 @@ void SpritesU::drawBasicNoChecks(
                 out %[spdr], __zero_reg__
                 mul %A[image_data], %[shift_coef]
                 movw %A[image_data], r0
-                lpm
-                lpm
-                lpm
-                lpm
-                nop
+                rcall L%=_delay_13
                 in %A[shift_mask], %[spdr]
                 out %[spdr], __zero_reg__
                 mul %A[shift_mask], %[shift_coef]
@@ -757,7 +760,6 @@ void SpritesU::drawBasicNoChecks(
                 breq L%=_middle_skip_reseek
                 in r0, %[spsr]
                 sbi %[fxport], %[fxbit]
-                lpm
                 rcall L%=_seek
 
             L%=_middle_skip_reseek:
@@ -801,9 +803,8 @@ void SpritesU::drawBasicNoChecks(
                 movw %A[image_data], r0
                 ld %[buf_data], %a[buf]
                 ld %B[shift_mask], %a[bufn]
-                lpm
-                lpm
-                lpm
+                rcall L%=_delay_7
+                rjmp .+0
                 in %A[shift_mask], %[spdr]
                 out %[spdr], __zero_reg__
                 mul %A[shift_mask], %[shift_coef]
@@ -838,8 +839,8 @@ void SpritesU::drawBasicNoChecks(
                 breq L%=_bottom_dispatch
                 in r0, %[spsr]
                 sbi %[fxport], %[fxbit]
-                lpm
                 rcall L%=_seek
+                lpm
 
             L%=_bottom_dispatch:
 
@@ -858,7 +859,7 @@ void SpritesU::drawBasicNoChecks(
                 or %[buf_data], r0
                 st %a[buf]+, %[buf_data]
                 lpm
-                adiw r24, 0
+                rjmp .+0
                 dec %[cols]
                 brne L%=_bottom_loop
                 rjmp L%=_finish
@@ -870,11 +871,7 @@ void SpritesU::drawBasicNoChecks(
                 out %[spdr], __zero_reg__
                 mul %A[image_data], %[shift_coef]
                 movw %A[image_data], r0
-                lpm
-                lpm
-                lpm
-                lpm
-                nop
+                rcall L%=_delay_13
                 in %[pages], %[spdr]
                 out %[spdr], __zero_reg__
                 mul %[pages], %[shift_coef]
@@ -903,23 +900,26 @@ void SpritesU::drawBasicNoChecks(
             [pages]      "+&r" (pages),
             [count]      "=&r" (count),
             [buf_data]   "=&r" (buf_data),
-            [image_data] "=&r" (image_data)
+            [image_data] "=&r" (image_data),
+            [reseek]     "=&r" (reseek),
+            [sfc_read]   "=&d" (sfc_read)
             :
             [cols]       "r"   (cols),
+            [w]          "r"   (w),
             [buf_adv]    "r"   (buf_adv),
             [image_adv]  "r"   (image_adv),
             [shift_coef] "r"   (shift_coef),
             [shift_mask] "r"   (shift_mask),
             [bottom]     "r"   (bottom),
             [page_start] "r"   (page_start),
-            [reseek]     "r"   (reseek),
             [mode]       "r"   (mode),
-            [sfc_read]   "r"   (SFC_READ),
+            [SFC_READ]   "I"   (SFC_READ),
             [fxport]     "I"   (_SFR_IO_ADDR(FX_PORT)),
             [fxbit]      "I"   (FX_BIT),
             [spdr]       "I"   (_SFR_IO_ADDR(SPDR)),
             [spsr]       "I"   (_SFR_IO_ADDR(SPSR)),
-            [spif]       "I"   (SPIF)
+            [spif]       "I"   (SPIF),
+            [page]       "i"   (&FX::programDataPage)
             :
             "memory"
             );
