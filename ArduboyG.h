@@ -777,39 +777,56 @@ protected:
 #endif
     }
     
+    __attribute__((naked, noinline))
     static void paint(uint8_t* image, bool clear, uint8_t pages, uint8_t mask)
     {
-        uint16_t count = pages * 128;
-        SPCR = _BV(SPE) | _BV(MSTR) | _BV(DORD); // MSB-to-LSB
-        image += count;
-        asm volatile(
-            "1: ld    __tmp_reg__, -%a[ptr]     ;2        \n\t" //tmp = *(--image)
-            "   mov   r16, __tmp_reg__          ;1        \n\t" //tmp2 = tmp
-            "   cpse  %[clear], __zero_reg__    ;1/2      \n\t" //if(clear)
-            "   mov   r16, __zero_reg__         ;1        \n\t" //    tmp2 = 0;
-            "   st    %a[ptr], r16              ;2        \n\t" //*(image) = tmp2
-            "   subi  r16, 0                    ;1        \n\t" //[delay]
-            "   sbiw  %A[count], 0              ;2        \n\t" //[delay]
-            "   sbiw  %A[count], 0              ;2        \n\t" //[delay]
-            "   and   __tmp_reg__, %[mask]      ;1        \n\t" //tmp &= mask
-            "   out   %[spdr], __tmp_reg__      ;1        \n\t" //SPDR = tmp
-            "   sbiw  %A[count], 1              ;2        \n\t" //len--
-            "   brne  1b                        ;1/2 :18  \n\t" //len > 0
-            "   in    __tmp_reg__, %[spsr]                \n\t" //read SPSR to clear SPIF
-            "   sbiw  %A[count], 0                        \n\t"
-            "   sbiw  %A[count], 0                        \n\t" // delay before resetting DORD
-            "   sbiw  %A[count], 0                        \n\t" // below so it doesn't mess up
-            "   sbiw  %A[count], 0                        \n\t" // the last transfer
-            "   sbiw  %A[count], 0                        \n\t"
-            : [ptr]     "+&e" (image),
-              [count]   "+&w" (count)
+        asm volatile(R"ASM(
+        
+                ; set SPCR DORD to MSB-to-LSB order
+                ldi  r19, %[DORD1]
+                out  %[spcr], r19
+                
+                ; init counter and set buffer pointer to end of buffer pages
+                movw r26, r24
+                ldi  r19, 128
+                mul  r20, r19
+                movw r24, r0
+                clr  __zero_reg__
+                add  r26, r24
+                adc  r27, r25
+        
+                ; main loop: send buffer in reverse direction, masking bytes
+            1:  ld   r21, -X
+                mov  r19, r21
+                cpse r22, __zero_reg__
+                mov  r19, __zero_reg__
+                st   X, r19
+                lpm
+                rjmp .+0
+                and  r21, r18
+                out  %[spdr], r21
+                sbiw r24, 1
+                brne 1b
+                
+                ; delay for final byte, then reset SPCR DORD and clear SPIF
+                rcall 2f
+                rcall 2f
+                ldi  r19, %[DORD2]
+                in   __tmp_reg__, %[spsr]
+                out  %[spcr], r19
+            2:  ret
+        
+            )ASM"
+            
+            :
             : [spdr]    "I"   (_SFR_IO_ADDR(SPDR)),
               [spsr]    "I"   (_SFR_IO_ADDR(SPSR)),
+              [spcr]    "I"   (_SFR_IO_ADDR(SPCR)),
               [clear]   "r"   (clear),
-              [mask]    "r"   (mask)
-            : "r16"
-        );
-        SPCR = _BV(SPE) | _BV(MSTR); // LSB-to-MSB
+              [mask]    "r"   (mask),
+              [DORD1]   "i"   (_BV(SPE) | _BV(MSTR) | _BV(DORD)),
+              [DORD2]   "i"   (_BV(SPE) | _BV(MSTR))
+            );
     }
         
     // Plane                               0  1  2
