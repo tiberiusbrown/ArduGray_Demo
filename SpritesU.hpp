@@ -489,7 +489,7 @@ void SpritesU::drawBasicNoChecks(
     else
 #endif
 #ifdef SPRITESU_PLUSMASK
-    if(mode & 2)
+    if(mode == MODE_PLUSMASK)
     {
         uint8_t const* image_ptr = (uint8_t const*)image;
 #if ARDUINO_ARCH_AVR
