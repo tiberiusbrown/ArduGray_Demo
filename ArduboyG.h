@@ -111,13 +111,21 @@ Example Usage:
 #if !defined(ABG_UPDATE_EVERY_N_DENOM_DEFAULT)
 #define ABG_UPDATE_EVERY_N_DENOM_DEFAULT 1
 #endif
-#if !defined(ABG_FPS_DEFAULT)
-#define ABG_FPS_DEFAULT 156
+
+#if !defined(ABG_REFRESH_HZ)
+#define ABG_REFRESH_HZ 156
 #endif
+
+#if defined(ABG_UPDATE_HZ_DEFAULT)
+#undef ABG_UPDATE_EVERY_N_DEFAULT
+#undef ABG_UPDATE_EVERY_N_DENOM_DEFAULT
+#define ABG_UPDATE_EVERY_N_DEFAULT (ABG_REFRESH_HZ / 3)
+#define ABG_UPDATE_EVERY_N_DENOM_DEFAULT ABG_UPDATE_HZ_DEFAULT
+#endif
+
 #if !defined(ABG_CONTRAST_DEFAULT)
 #define ABG_CONTRAST_DEFAULT 255
 #endif
-
 #if !defined(ABG_PRECHARGE_CYCLES)
 #define ABG_PRECHARGE_CYCLES 1
 #endif
@@ -166,9 +174,22 @@ struct ABG_Flags
 
 namespace abg_detail
 {
-    
+
+static constexpr uint8_t num_planes(ABG_Mode mode)
+{
+    return
+        mode == ABG_Mode::L4_Contrast ? 2 :
+        mode == ABG_Mode::L4_Triplane ? 3 :
+        mode == ABG_Mode::L3          ? 2 :
+        1;
+}
+
+#if defined(ABG_TIMER3) || defined(ABG_TIMER1)
+constexpr uint16_t timer_counter = F_CPU / 64 / ABG_REFRESH_HZ;
+#elif defined(ABG_TIMER4)
+constexpr uint16_t timer_counter = F_CPU / 256 / ABG_REFRESH_HZ;
+#endif
 extern uint8_t  contrast;
-extern uint16_t timer_counter;
 extern uint8_t  update_counter;
 extern uint8_t  update_every_n;
 extern uint8_t  update_every_n_denom;
@@ -288,9 +309,10 @@ struct ArduboyG_Common : public BASE
             update_counter = 0;
     }
     
-    static void setRefreshHz(uint8_t hz)
+    static void setUpdateHz(uint8_t hz)
     {
-        timer_counter = (F_CPU / 64) / hz;
+        if(hz > ABG_REFRESH_HZ) hz = ABG_REFRESH_HZ;
+        setUpdateEveryN(ABG_REFRESH_HZ / num_planes(MODE), hz);
     }
 
     static void drawBitmap(
@@ -874,11 +896,6 @@ using ArduboyG     = ArduboyG_Config<>;
 namespace abg_detail
 {
 
-#if defined(ABG_TIMER3) || defined(ABG_TIMER1)
-uint16_t timer_counter = F_CPU / 64 / ABG_FPS_DEFAULT;
-#elif defined(ABG_TIMER4)
-uint16_t timer_counter = F_CPU / 256 / ABG_FPS_DEFAULT;
-#endif
 uint8_t  update_counter;
 uint8_t  update_every_n = ABG_UPDATE_EVERY_N_DEFAULT;
 uint8_t  update_every_n_denom = ABG_UPDATE_EVERY_N_DENOM_DEFAULT;
