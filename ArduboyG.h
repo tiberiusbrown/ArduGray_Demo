@@ -608,7 +608,7 @@ struct ArduboyG_Common : public BASE
         return false;
     }
     
-    static void waitForNextPlane(uint8_t clear = WHITE)
+    static void waitForNextPlane(uint8_t clear = BLACK)
     {
         do
         {
