@@ -608,7 +608,7 @@ struct ArduboyG_Common : public BASE
         return false;
     }
     
-    static void waitForNextPlane()
+    static void waitForNextPlane(uint8_t clear = WHITE)
     {
         do
         {
@@ -625,7 +625,7 @@ struct ArduboyG_Common : public BASE
             }
             needs_display = false;
             sei();
-            doDisplay();
+            doDisplay(clear);
         }
 #if defined(ABG_SYNC_THREE_PHASE)
         while(current_phase != 3);
@@ -658,10 +658,19 @@ struct ArduboyG_Common : public BASE
     
 protected:
     
-    static void doDisplay()
+    static void doDisplay(uint8_t clear)
     {
         uint8_t* b = getBuffer();
         
+        uint16_t clearcfg = 1;
+        {
+            uint8_t p = current_plane;
+            p += 1;
+            if(p >= num_planes(MODE)) p = 0;
+            if(planeColor(p, clear) != 0)
+                clearcfg |= 0xff00;
+        }
+                
 #if defined(ABG_SYNC_THREE_PHASE)
         uint8_t phase = current_phase;
         if(phase == 1)
@@ -672,16 +681,16 @@ protected:
         }
         else if(phase == 2)
         {
-            paint(&b[128 * 7], false, 1, 0xf0);
+            paint(&b[128 * 7], 0, 1, 0xf0);
             send_cmds_prog<0x22, 0, 7>();
         }
         else if(phase == 3)
         {
             send_cmds_prog<0x22, 0, 7>();
-            paint(&b[128 * 7], false, 1, 0xff);
+            paint(&b[128 * 7], 0, 1, 0xff);
             send_cmds_prog<0xA8, 0>();
-            paint(&b[128 * 0], true, 7, 0xff);
-            paint(&b[128 * 7], true, 1, 0x00);
+            paint(&b[128 * 0], clearcfg, 7, 0xff);
+            paint(&b[128 * 7], clearcfg, 1, 0x00);
 
             if(MODE == ABG_Mode::L4_Triplane)
             {
@@ -697,9 +706,9 @@ protected:
         if(MODE == ABG_Mode::L4_Contrast)
             send_cmds(0x81, (current_plane & 1) ? contrast : contrast / 2);
 #if defined(ABG_SYNC_PARK_ROW)
-        paint(&b[128 * 7], true, 1, 0x7f);
+        paint(&b[128 * 7], clearcfg, 1, 0x7f);
         send_cmds_prog<0xA8, 63>();
-        paint(&b[128 * 0], true, 7, 0xff);
+        paint(&b[128 * 0], clearcfg, 7, 0xff);
         send_cmds_prog<0xA8, 0>();
 #elif defined(ABG_SYNC_SLOW_DRIVE)
         {
@@ -710,29 +719,32 @@ protected:
             // 3. Make phase 1 and 2 very large
             send_cmds_prog<
                 0x22, 0, 7, 0x8D, 0x0, 0xD5, 0x0F, 0xD9, 0xFF>();
-            paint(&b[128 * 7], false, 1, 0xff);
+            paint(&b[128 * 7], 0, 1, 0xff);
             send_cmds_prog<
                 0xA8, 63, 0x8D, 0x14, 0xD9, 0x31, 0xD5, 0xF0>();
             SREG = sreg;
         }
-        paint(&b[128 * 0], true, 7, 0xff);
+        paint(&b[128 * 0], clearcfg, 7, 0xff);
         send_cmds_prog<0xA8, 0>();
-        paint(&b[128 * 7], true, 1, 0x00);
+        paint(&b[128 * 7], clearcfg, 1, 0x00);
 #endif
+        uint8_t cp = current_plane;
         if(MODE == ABG_Mode::L4_Triplane)
         {
-            if(++current_plane >= 3)
-                current_plane = 0;
+            if(++cp >= 3)
+                cp = 0;
         }
         else
-            current_plane = !current_plane;
-        if(current_plane == 0)
+            cp = !cp;
+        if(cp == 0)
             update_counter += update_every_n_denom;
+        current_plane = cp;
 #endif
     }
     
+    // clear: low byte is whether to clear, high byte is clear color
     __attribute__((naked, noinline))
-    static void paint(uint8_t* image, bool clear, uint8_t pages, uint8_t mask)
+    static void paint(uint8_t* image, uint16_t clear, uint8_t pages, uint8_t mask)
     {
         asm volatile(R"ASM(
         
@@ -753,7 +765,7 @@ protected:
             1:  ld   r21, -X
                 mov  r19, r21
                 cpse r22, __zero_reg__
-                mov  r19, __zero_reg__
+                mov  r19, r23
                 st   X, r19
                 lpm
                 rjmp .+0
