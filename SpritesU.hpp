@@ -99,8 +99,22 @@ void SpritesU::drawBasic(
     
     uint16_t w_and_h = (uint16_t(h) << 8) | w;
     
+    
 #if ARDUINO_ARCH_AVR
-    uint16_t tmp, tmp2;
+
+    /*
+              A1 A0
+              B1 B0
+           ========
+              A0*B0
+           A0*B1
+           A1*B0
+        A1*B1
+        ===========
+           C2 C1 C0
+    */
+    
+    uint16_t tmp;
     asm volatile(R"ASM(
             cp   %A[frame], __zero_reg__
             cpc  %B[frame], __zero_reg__
@@ -114,23 +128,27 @@ void SpritesU::drawBasic(
             lsl  %A[h]
             mul  %A[h], %[w]
             movw %A[tmp], r0
-            mul  %A[tmp], %A[frame]
-            movw %A[tmp2], r0
+            
             mul  %A[tmp], %B[frame]
-            add  %B[tmp2], r0
+            add  %B[image], r0
+            adc  %C[image], r1
             mul  %B[tmp], %A[frame]
-            add  %B[tmp2], r0
-            add  %A[image], %A[tmp2]
-            adc  %B[image], %B[tmp2]
+            add  %B[image], r0
+            adc  %C[image], r1
+            mul  %B[tmp], %B[frame]
+            add  %C[image], r0
+            mul  %A[tmp], %A[frame]
+            add  %A[image], r0
+            adc  %B[image], r1
             clr  __zero_reg__
             adc  %C[image], __zero_reg__
+            
         1:
         )ASM"
         :
         [h]     "+&r" (h),
         [image] "+&r" (image),
-        [tmp]   "=&r" (tmp),
-        [tmp2]  "=&r" (tmp2)
+        [tmp]   "=&r" (tmp)
         :
         [frame] "r"   (frame),
         [mode]  "r"   (mode),
@@ -139,11 +157,10 @@ void SpritesU::drawBasic(
 #else
     if(frame != 0)
     {
-        uint8_t tmp = h >> 3;
-        if(mode & 1) tmp *= 2;
-        uint16_t tmp2 = tmp * w;
-        tmp2 = tmp2 * frame;
-        image += tmp2;
+        h >>= 3;
+        if(mode & 1) h <<= 1;
+        uint16_t tmp = h * w;
+        image += uint24_t(tmp) * frame;
     }
 #endif
 
@@ -293,15 +310,6 @@ void SpritesU::drawBasicNoChecks(
     cols = w;
 
     pages >>= 3;
-
-    if(frame != 0)
-    {
-        shift_coef = pages;
-        if(mode & 1) shift_coef *= 2;
-        shift_mask = shift_coef * w;
-        image_adv = shift_mask * frame;
-        image += image_adv;
-    }
 
     // precompute vertical shift coef and mask
     shift_coef = SpritesU_bitShiftLeftUInt8(y);
@@ -663,7 +671,7 @@ void SpritesU::drawBasicNoChecks(
                 cp  %[w], %[cols]            ;  1
                 breq .+2                     ;  1
                 inc %[reseek]                ;  1
-                rcall L%=_delay_14           ; 10
+                rcall L%=_delay_10           ; 10
                 out %[spdr], %C[image]
                 rcall L%=_delay_17
                 out %[spdr], %B[image]
@@ -680,6 +688,7 @@ void SpritesU::drawBasicNoChecks(
                 nop
             L%=_delay_13:
                 lpm
+            L%=_delay_10:
                 lpm
             L%=_delay_7:
                 ret
