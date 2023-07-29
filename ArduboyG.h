@@ -681,16 +681,16 @@ protected:
         }
         else if(phase == 2)
         {
-            paint(&b[128 * 7], 0, 1, 0xf0);
+            paint(&b[128 * 7], 0, 0x0701, 0xf0);
             send_cmds_prog<0x22, 0, 7>();
         }
         else if(phase == 3)
         {
             send_cmds_prog<0x22, 0, 7>();
-            paint(&b[128 * 7], 0, 1, 0xff);
+            paint(&b[128 * 7], 0, 0x0701, 0xff);
             send_cmds_prog<0xA8, 0>();
-            paint(&b[128 * 0], clearcfg, 7, 0xff);
-            paint(&b[128 * 7], clearcfg, 1, 0x00);
+            paint(&b[128 * 0], clearcfg, 0x0007, 0xff);
+            paint(&b[128 * 7], clearcfg, 0x0701, 0x00);
 
             if(MODE == ABG_Mode::L4_Triplane)
             {
@@ -706,9 +706,9 @@ protected:
         if(MODE == ABG_Mode::L4_Contrast)
             send_cmds(0x81, (current_plane & 1) ? contrast : contrast / 2);
 #if defined(ABG_SYNC_PARK_ROW)
-        paint(&b[128 * 7], clearcfg, 1, 0x7f);
+        paint(&b[128 * 7], clearcfg, 0x0701, 0x7f);
         send_cmds_prog<0xA8, 63>();
-        paint(&b[128 * 0], clearcfg, 7, 0xff);
+        paint(&b[128 * 0], clearcfg, 0x0007, 0xff);
         send_cmds_prog<0xA8, 0>();
 #elif defined(ABG_SYNC_SLOW_DRIVE)
         {
@@ -719,14 +719,14 @@ protected:
             // 3. Make phase 1 and 2 very large
             send_cmds_prog<
                 0x22, 0, 7, 0x8D, 0x0, 0xD5, 0x0F, 0xD9, 0xFF>();
-            paint(&b[128 * 7], 0, 1, 0xff);
+            paint(&b[128 * 7], 0, 0x0701, 0xff);
             send_cmds_prog<
                 0xA8, 63, 0x8D, 0x14, 0xD9, 0x31, 0xD5, 0xF0>();
             SREG = sreg;
         }
-        paint(&b[128 * 0], clearcfg, 7, 0xff);
+        paint(&b[128 * 0], clearcfg, 0x0007, 0xff);
         send_cmds_prog<0xA8, 0>();
-        paint(&b[128 * 7], clearcfg, 1, 0x00);
+        paint(&b[128 * 7], clearcfg, 0x0701, 0x00);
 #endif
         uint8_t cp = current_plane;
         if(MODE == ABG_Mode::L4_Triplane)
@@ -743,10 +743,92 @@ protected:
     }
     
     // clear: low byte is whether to clear, high byte is clear color
+    // pages: low byte is page count, high byte is starting page (which is unused for SSD1306)
     __attribute__((naked, noinline))
-    static void paint(uint8_t* image, uint16_t clear, uint8_t pages, uint8_t mask)
+    static void paint(uint8_t* image, uint16_t clear, uint16_t pages, uint8_t mask)
     {
-        asm volatile(R"ASM(
+        // image: r24:r25
+        // clear: r22:r23
+        // pages: r20:r21
+        // mask : r18
+#if defined(OLED_SH1106) || defined(LCD_ST7565)
+        asm volatile(
+        
+            R"ASM(
+        
+                ; set SPCR DORD to MSB-to-LSB order
+                ldi  r19, %[DORD1]
+                out  %[spcr], r19
+                 
+                ; set buffer pointer to end of buffer pages
+                movw r26, r24
+                ldi  r19, 128
+                mul  r20, r19
+                movw r24, r0
+                clr  __zero_reg__
+                add  r26, r24
+                adc  r27, r25
+                
+                ; add OLED_SET_PAGE_ADDRESS
+                subi r21, -(0xb0)
+           
+                ; outer loop
+            1:  cbi  %[CMDPORT], %[CMDBIT]
+                out  %[spdr], r21 ; set page
+                rcall 3f
+                rcall 3f
+                rjmp .+0
+                ldi  r24, 0x10
+                out  %[spdr], r24 ; set column hi
+                rcall 3f
+                rcall 3f
+                rcall 3f
+                sbi  %[CMDPORT], %[CMDBIT]
+                ldi  r24, 128
+           
+                ; main loop: send buffer in reverse direction, masking bytes
+            2:  ld   __tmp_reg__, -X
+                mov  r19, __tmp_reg__
+                cpse r22, __zero_reg__
+                mov  r19, r23
+                st   X, r19
+                rjmp .+0
+                rjmp .+0
+                nop
+                and  __tmp_reg__, r18
+                out  %[spdr], __tmp_reg__
+                subi r24, 1
+                brne 2b
+                
+                rcall 3f
+                rcall 3f
+                inc  r21
+                subi r20, 1
+                brne 1b
+                                
+                ; delay for final byte, then reset SPCR DORD and clear SPIF
+                rcall 3f
+                rcall 3f
+                ldi  r19, %[DORD2]
+                in   __tmp_reg__, %[spsr]
+                out  %[spcr], r19
+            3:  ret
+            
+            )ASM"
+            
+            :
+            : [spdr]    "I"   (_SFR_IO_ADDR(SPDR)),
+              [spsr]    "I"   (_SFR_IO_ADDR(SPSR)),
+              [spcr]    "I"   (_SFR_IO_ADDR(SPCR)),
+              [DORD1]   "i"   (_BV(SPE) | _BV(MSTR) | _BV(DORD)),
+              [DORD2]   "i"   (_BV(SPE) | _BV(MSTR)),
+              [CMDPORT] "I"   (_SFR_IO_ADDR(DC_PORT)),
+              [CMDBIT]  "I"   (DC_BIT)
+            );
+#else
+        asm volatile(
+        
+            R"ASM(
         
                 ; set SPCR DORD to MSB-to-LSB order
                 ldi  r19, %[DORD1]
@@ -791,6 +873,7 @@ protected:
               [DORD1]   "i"   (_BV(SPE) | _BV(MSTR) | _BV(DORD)),
               [DORD2]   "i"   (_BV(SPE) | _BV(MSTR))
             );
+#endif
     }
         
     // Plane                               0  1  2
