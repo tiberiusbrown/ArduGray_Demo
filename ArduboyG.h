@@ -256,7 +256,16 @@ struct ArduboyG_Common : public BASE
     {
         send_cmds_prog<
             0xC0, 0xA0, // reset to normal orientation
-            0xD9, (ABG_PRECHARGE_CYCLES | (ABG_DISCHARGE_CYCLES << 4)),
+            0xD9, ((ABG_PRECHARGE_CYCLES) | ((ABG_DISCHARGE_CYCLES) << 4)),
+#if defined(OLED_SH1106)
+            0xD5, 0xF0, // clock divider (not set in homemade package)
+#endif
+#if defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
+            0x81, 255,  // default contrast
+#endif
+#if defined(OLED_SSD1306)
+            0xDB, 0x20, // VCOM deselect Level
+#endif
             0xA8, 0     // park at row 0
         >();
 
@@ -706,9 +715,9 @@ protected:
         if(MODE == ABG_Mode::L4_Contrast)
             send_cmds(0x81, (current_plane & 1) ? contrast : contrast / 2);
 #if defined(ABG_SYNC_PARK_ROW)
-        paint(&b[128 * 7], clearcfg, 0x0701, 0x7f);
+        paint(&b[128 * 7], clearcfg, 0x0001, 0x7f);
         send_cmds_prog<0xA8, 63>();
-        paint(&b[128 * 0], clearcfg, 0x0007, 0xff);
+        paint(&b[128 * 0], clearcfg, 0x0107, 0xff);
         send_cmds_prog<0xA8, 0>();
 #elif defined(ABG_SYNC_SLOW_DRIVE)
         {
@@ -755,10 +764,6 @@ protected:
         asm volatile(
         
             R"ASM(
-        
-                ; set SPCR DORD to MSB-to-LSB order
-                ldi  r19, %[DORD1]
-                out  %[spcr], r19
                  
                 ; set buffer pointer to end of buffer pages
                 movw r26, r24
@@ -770,20 +775,24 @@ protected:
                 adc  r27, r25
                 
                 ; add OLED_SET_PAGE_ADDRESS
-                subi r21, -(0xb0)
+                subi r21, -(%[page_cmd])
            
                 ; outer loop
-            1:  cbi  %[CMDPORT], %[CMDBIT]
+            1:  ldi  r19, %[DORD2]
+                out  %[spcr], r19
+                cbi  %[dc_port], %[dc_bit]
                 out  %[spdr], r21 ; set page
                 rcall 3f
                 rcall 3f
                 rjmp .+0
-                ldi  r24, 0x10
+                ldi  r24, %[col_cmd]
                 out  %[spdr], r24 ; set column hi
                 rcall 3f
                 rcall 3f
                 rcall 3f
-                sbi  %[CMDPORT], %[CMDBIT]
+                sbi  %[dc_port], %[dc_bit]
+                ldi  r19, %[DORD1]
+                out  %[spcr], r19
                 ldi  r24, 128
            
                 ; main loop: send buffer in reverse direction, masking bytes
@@ -792,18 +801,17 @@ protected:
                 cpse r22, __zero_reg__
                 mov  r19, r23
                 st   X, r19
-                rjmp .+0
-                rjmp .+0
-                nop
+                lpm  r19, Z
+                lpm  r19, Z
                 and  __tmp_reg__, r18
                 out  %[spdr], __tmp_reg__
-                subi r24, 1
+                dec  r24
                 brne 2b
                 
                 rcall 3f
                 rcall 3f
                 inc  r21
-                subi r20, 1
+                dec  r20
                 brne 1b
                                 
                 ; delay for final byte, then reset SPCR DORD and clear SPIF
@@ -817,13 +825,15 @@ protected:
             )ASM"
             
             :
-            : [spdr]    "I"   (_SFR_IO_ADDR(SPDR)),
-              [spsr]    "I"   (_SFR_IO_ADDR(SPSR)),
-              [spcr]    "I"   (_SFR_IO_ADDR(SPCR)),
-              [DORD1]   "i"   (_BV(SPE) | _BV(MSTR) | _BV(DORD)),
-              [DORD2]   "i"   (_BV(SPE) | _BV(MSTR)),
-              [CMDPORT] "I"   (_SFR_IO_ADDR(DC_PORT)),
-              [CMDBIT]  "I"   (DC_BIT)
+            : [spdr]     "I"   (_SFR_IO_ADDR(SPDR)),
+              [spsr]     "I"   (_SFR_IO_ADDR(SPSR)),
+              [spcr]     "I"   (_SFR_IO_ADDR(SPCR)),
+              [page_cmd] "M"   (OLED_SET_PAGE_ADDRESS),
+              [col_cmd]  "M"   (OLED_SET_COLUMN_ADDRESS_HI),
+              [DORD1]    "i"   (_BV(SPE) | _BV(MSTR) | _BV(DORD)),
+              [DORD2]    "i"   (_BV(SPE) | _BV(MSTR)),
+              [dc_port]  "I"   (_SFR_IO_ADDR(DC_PORT)),
+              [dc_bit]   "I"   (DC_BIT)
             );
 #else
         asm volatile(
