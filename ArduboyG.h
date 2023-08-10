@@ -690,16 +690,16 @@ protected:
         }
         else if(phase == 2)
         {
-            paint(&b[128 * 7], 0, 0x0701, 0xf0);
+            paint(&b[128 * 7], 0, 0x0001, 0xf0);
             send_cmds_prog<0x22, 0, 7>();
         }
         else if(phase == 3)
         {
             send_cmds_prog<0x22, 0, 7>();
-            paint(&b[128 * 7], 0, 0x0701, 0xff);
+            paint(&b[128 * 7], 0, 0x0001, 0xff);
             send_cmds_prog<0xA8, 0>();
-            paint(&b[128 * 0], clearcfg, 0x0007, 0xff);
-            paint(&b[128 * 7], clearcfg, 0x0701, 0x00);
+            paint(&b[128 * 0], clearcfg, 0x0107, 0xff);
+            paint(&b[128 * 7], clearcfg, 0x0001, 0x00);
 
             if(MODE == ABG_Mode::L4_Triplane)
             {
@@ -728,14 +728,14 @@ protected:
             // 3. Make phase 1 and 2 very large
             send_cmds_prog<
                 0x22, 0, 7, 0x8D, 0x0, 0xD5, 0x0F, 0xD9, 0xFF>();
-            paint(&b[128 * 7], 0, 0x0701, 0xff);
+            paint(&b[128 * 7], 0, 0x0001, 0xff);
             send_cmds_prog<
                 0xA8, 63, 0x8D, 0x14, 0xD9, 0x31, 0xD5, 0xF0>();
             SREG = sreg;
         }
-        paint(&b[128 * 0], clearcfg, 0x0007, 0xff);
+        paint(&b[128 * 0], clearcfg, 0x0107, 0xff);
         send_cmds_prog<0xA8, 0>();
-        paint(&b[128 * 7], clearcfg, 0x0701, 0x00);
+        paint(&b[128 * 7], clearcfg, 0x0001, 0x00);
 #endif
         uint8_t cp = current_plane;
         if(MODE == ABG_Mode::L4_Triplane)

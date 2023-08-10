@@ -1,7 +1,7 @@
 #pragma once
 
 #define ABG_TIMER1
-#define ABG_SYNC_PARK_ROW
+#define ABG_SYNC_SLOW_DRIVE
 
 #if defined(OLED_SH1106)
 #define ABG_REFRESH_HZ 125
