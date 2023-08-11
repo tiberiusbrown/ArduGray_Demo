@@ -1,2 +1,2 @@
-# ArduGray_Demo
+# ArduboyG: Grayscale on the Arduboy
  
