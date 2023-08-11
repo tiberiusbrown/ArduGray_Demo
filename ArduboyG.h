@@ -21,6 +21,15 @@ Optional Configuration Macros (define before including ArduboyG.h):
     - ABG_TIMER3 (default)
     - ABG_TIMER4
 
+    When using L4_Triplane, you can define one of the following macros to
+    convert to L3 while retaining the plane behavior of L4_Triplane:
+    - ABG_L3_CONVERT_LIGHTEN
+        Convert light gray to white and dark gray to gray
+    - ABG_L3_CONVERT_MIX
+        Convert both light gray and dark gray to gray
+    - ABG_L3_CONVERT_DARKEN
+        Convert light gray to gray and dark gray to black
+
 Default Template Configuration:
     
     ArduboyGBase a;
@@ -135,6 +144,25 @@ Example Usage:
 #endif
 #if !defined(ABG_DISCHARGE_CYCLES)
 #define ABG_DISCHARGE_CYCLES 2
+#endif
+
+#if defined(ABG_L3_CONVERT_LIGHTEN)
+#undef ABG_L3_CONVERT_MIX
+#undef ABG_L3_CONVERT_DARKEN
+#endif
+#if defined(ABG_L3_CONVERT_MIX)
+#undef ABG_L3_CONVERT_LIGHTEN
+#undef ABG_L3_CONVERT_DARKEN
+#endif
+#if defined(ABG_L3_CONVERT_DARKEN)
+#undef ABG_L3_CONVERT_LIGHTEN
+#undef ABG_L3_CONVERT_MIX
+#endif
+
+#if defined(ABG_L3_CONVERT_LIGHTEN) || defined(ABG_L3_CONVERT_MIX) || defined(ABG_L3_CONVERT_DARKEN)
+#define ABG_L4_TRIPLANE_PLANE_LIMIT 2
+#else
+#define ABG_L4_TRIPLANE_PLANE_LIMIT 3
 #endif
 
 #undef BLACK
@@ -608,6 +636,16 @@ struct ArduboyG_Common : public BASE
 
     static uint8_t currentPlane()
     {
+        if(MODE == ABG_Mode::L4_Triplane)
+        {
+#if ABG_L3_CONVERT_LIGHTEN
+            return current_plane;
+#elif ABG_L3_CONVERT_MIX
+            return current_plane << 1;
+#elif ABG_L3_CONVERT_DARKEN
+            return current_plane + 1;
+#endif
+        }
         return current_plane;
     }
     
@@ -707,7 +745,7 @@ protected:
 
             if(MODE == ABG_Mode::L4_Triplane)
             {
-                if(++current_plane >= 3)
+                if(++current_plane >= ABG_L4_TRIPLANE_PLANE_LIMIT)
                     current_plane = 0;
             }
             else
@@ -744,7 +782,7 @@ protected:
         uint8_t cp = current_plane;
         if(MODE == ABG_Mode::L4_Triplane)
         {
-            if(++cp >= 3)
+            if(++cp >= ABG_L4_TRIPLANE_PLANE_LIMIT)
                 cp = 0;
         }
         else
