@@ -146,7 +146,7 @@ Example Usage:
 #define ABG_DISCHARGE_CYCLES 2
 #endif
 
-#if defined(OLED_SH1106) && !defined(ABG_L3_CONVERT_LIGHTEN) && !defined(ABG_L3_CONVERT_MIX) && !defined(ABG_L3_CONVERT_DARKEN)
+#if defined(OLED_SH1106) && !defined(ABG_NO_L3_CONVERSION) && !defined(ABG_L3_CONVERT_LIGHTEN) && !defined(ABG_L3_CONVERT_MIX) && !defined(ABG_L3_CONVERT_DARKEN)
 #define ABG_L3_CONVERT_MIX
 #endif
 
@@ -298,9 +298,6 @@ struct ArduboyG_Common : public BASE
 #endif
 #if defined(ABG_SYNC_PARK_ROW) || defined(ABG_SYNC_SLOW_DRIVE)
             0x81, 255,  // default contrast
-#endif
-#if defined(OLED_SSD1306)
-            0xDB, 0x20, // VCOM deselect Level
 #endif
             0xA8, 0     // park at row 0
         >();
