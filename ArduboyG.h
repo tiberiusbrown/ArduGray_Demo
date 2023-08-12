@@ -146,6 +146,10 @@ Example Usage:
 #define ABG_DISCHARGE_CYCLES 2
 #endif
 
+#if defined(OLED_SH1106) && !defined(ABG_L3_CONVERT_LIGHTEN) && !defined(ABG_L3_CONVERT_MIX) && !defined(ABG_L3_CONVERT_DARKEN)
+#define ABG_L3_CONVERT_MIX
+#endif
+
 #if defined(ABG_L3_CONVERT_LIGHTEN)
 #undef ABG_L3_CONVERT_MIX
 #undef ABG_L3_CONVERT_DARKEN
@@ -638,11 +642,11 @@ struct ArduboyG_Common : public BASE
     {
         if(MODE == ABG_Mode::L4_Triplane)
         {
-#if ABG_L3_CONVERT_LIGHTEN
+#if defined(ABG_L3_CONVERT_LIGHTEN)
             return current_plane;
-#elif ABG_L3_CONVERT_MIX
+#elif defined(ABG_L3_CONVERT_MIX)
             return current_plane << 1;
-#elif ABG_L3_CONVERT_DARKEN
+#elif defined(ABG_L3_CONVERT_DARKEN)
             return current_plane + 1;
 #endif
         }
