@@ -123,7 +123,7 @@ Example Usage:
 
 #if !defined(ABG_REFRESH_HZ)
 #if defined(OLED_SH1106)
-#define ABG_REFRESH_HZ 125
+#define ABG_REFRESH_HZ 120
 #else
 #define ABG_REFRESH_HZ 156
 #endif
