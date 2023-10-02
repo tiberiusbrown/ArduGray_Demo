@@ -375,7 +375,7 @@ void SpritesU::drawBasicNoChecks(
 #if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
-                cpi %[page_start], 0
+                cp %[page_start], __zero_reg__
                 brge L%=_middle
 
                 ; advance buf to next page
@@ -503,7 +503,7 @@ void SpritesU::drawBasicNoChecks(
 #if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
-                cpi %[page_start], 0
+                cp %[page_start], __zero_reg__
                 brge L%=_middle
 
                 ; advance buf to next page
