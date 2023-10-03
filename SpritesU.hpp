@@ -409,8 +409,8 @@ void SpritesU::drawBasicNoChecks(
                 breq L%=_bottom
 
                 ; need Y pointer for middle pages
-                ;push r28
-                ;push r29
+                push r28
+                push r29
                 movw r28, %[buf]
                 subi r28, lo8(-128)
                 sbci r29, hi8(-128)
@@ -447,8 +447,8 @@ void SpritesU::drawBasicNoChecks(
                 brne L%=_middle_loop_outer
 
                 ; done with Y pointer
-                ;pop r29
-                ;pop r28
+                pop r29
+                pop r28
 
             L%=_bottom:
 
@@ -544,8 +544,8 @@ void SpritesU::drawBasicNoChecks(
                 breq L%=_bottom
 
                 ; need Y pointer for middle pages
-                ;push r28
-                ;push r29
+                push r28
+                push r29
                 movw r28, %[buf]
                 subi r28, lo8(-128)
                 sbci r29, hi8(-128)
@@ -589,8 +589,8 @@ void SpritesU::drawBasicNoChecks(
                 brne L%=_middle_loop_outer
 
                 ; done with Y pointer
-                ;pop r29
-                ;pop r28
+                pop r29
+                pop r28
 
             L%=_bottom:
 
