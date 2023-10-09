@@ -697,6 +697,12 @@ struct ArduboyG_Common : public BASE
     ABG_NOT_SUPPORTED static bool nextFrame();
     ABG_NOT_SUPPORTED static bool nextFrameDEV();
 
+#if defined(ABG_TIMER1)
+#define ABG_NO_PWM_LED __attribute__((error("This method cannot be used while using ABG_TIMER1.")))
+    ABG_NO_PWM_LED static void setRGBled(uint8_t, uint8_t);
+    ABG_NO_PWM_LED static void setRGBled(uint8_t, uint8_t, uint8_t);
+#endif
+
     // expose internal Arduboy2Core methods
     static void setCPUSpeed8MHz() { BASE::setCPUSpeed8MHz(); }
     static void bootSPI        () { BASE::bootSPI        (); }
