@@ -82,5 +82,4 @@ def convert_bin(fname, fout, shades, sw = None, sh = None, num = None):
     with open(fout, 'wb') as f:
         f.write(bytes)
 
-convert_header('player_sprites.png', 'player_sprites.h', 'PLAYER_SPRITES', 4, 16, 16)
-convert_bin('player_sprites.png', 'player_sprites.bin', 4, 16, 16)
+convert_header('tiles.png', 'tile_img2.hpp', 'TILE_IMG', 4, 16, 16)
