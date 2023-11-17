@@ -82,4 +82,4 @@ def convert_bin(fname, fout, shades, sw = None, sh = None, num = None):
     with open(fout, 'wb') as f:
         f.write(bytes)
 
-convert_header('tiles.png', 'tile_img2.hpp', 'TILE_IMG', 4, 16, 16)
+convert_header('tiles.png', 'tile_img.hpp', 'TILE_IMG', 4, 16, 16)
