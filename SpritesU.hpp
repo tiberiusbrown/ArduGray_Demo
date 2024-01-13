@@ -25,10 +25,17 @@ struct SpritesU
         int16_t x, int16_t y, uint8_t w, uint8_t h, uint8_t const* image);
 #endif
 
-#ifdef SPRITESU_OVERWRITE
+#ifdef SPRITESU_PLUSMASK
     static void drawPlusMask(
         int16_t x, int16_t y, uint8_t const* image, uint16_t frame);
     static void drawPlusMask(
+        int16_t x, int16_t y, uint8_t w, uint8_t h, uint8_t const* image);
+#endif
+
+#if defined(SPRITESU_OVERWRITE) || defined(SPRITESU_PLUSMASK)
+    static void drawSelfMask(
+        int16_t x, int16_t y, uint8_t const* image, uint16_t frame);
+    static void drawSelfMask(
         int16_t x, int16_t y, uint8_t w, uint8_t h, uint8_t const* image);
 #endif
 
@@ -41,6 +48,10 @@ struct SpritesU
         int16_t x, int16_t y, uint24_t image, uint16_t frame);
     static void drawPlusMaskFX(
         int16_t x, int16_t y, uint8_t w, uint8_t h, uint24_t image, uint16_t frame);
+    static void drawSelfMaskFX(
+        int16_t x, int16_t y, uint24_t image, uint16_t frame);
+    static void drawSelfMaskFX(
+        int16_t x, int16_t y, uint8_t w, uint8_t h, uint24_t image, uint16_t frame);
 #endif
 
 #ifdef SPRITESU_RECT
@@ -51,8 +62,10 @@ struct SpritesU
 
     static constexpr uint8_t MODE_OVERWRITE   = 0;
     static constexpr uint8_t MODE_PLUSMASK    = 1;
+    static constexpr uint8_t MODE_SELFMASK    = 4;
     static constexpr uint8_t MODE_OVERWRITEFX = 2;
     static constexpr uint8_t MODE_PLUSMASKFX  = 3;
+    static constexpr uint8_t MODE_SELFMASKFX  = 6;
 
     static void drawBasic(
         int16_t x, int16_t y, uint8_t w, uint8_t h,
@@ -97,8 +110,7 @@ void SpritesU::drawBasic(
     if(x + w <= 0) return;
     if(y + h <= 0) return;
     
-    uint16_t w_and_h = (uint16_t(h) << 8) | w;
-    
+    uint8_t oldh = h;    
     
 #if ARDUINO_ARCH_AVR
 
@@ -164,7 +176,7 @@ void SpritesU::drawBasic(
     }
 #endif
 
-    drawBasicNoChecks(w_and_h, image, mode, x, y);
+    drawBasicNoChecks((uint16_t(oldh) << 8) | w, image, mode, x, y);
 }
 
 void SpritesU::drawBasicNoChecks(
@@ -172,19 +184,29 @@ void SpritesU::drawBasicNoChecks(
     uint24_t image, uint8_t mode,
     int16_t x, int16_t y)
 {
-    uint8_t w = uint8_t(w_and_h);
-    uint8_t h = uint8_t(w_and_h >> 8);
-    
-    uint8_t pages = h;
-    uint8_t shift_coef;
-    uint16_t shift_mask;
-    int8_t page_start;
+    uint8_t* buf;
+    uint8_t pages;
+    uint8_t count;
+    uint8_t buf_data;
+    uint16_t image_data;
     uint8_t cols;
-    uint8_t col_start;
-    bool bottom;
     uint8_t buf_adv;
     uint16_t image_adv;
-    uint8_t* buf = Arduboy2Base::sBuffer;
+    uint16_t shift_mask;
+    uint8_t shift_coef;
+    bool bottom;
+    int8_t page_start;
+    uint8_t w;
+
+    {
+    uint16_t mask_data;
+    uint8_t h;
+    uint8_t col_start;
+    
+    w = uint8_t(w_and_h);
+    h = uint8_t(w_and_h >> 8);
+    buf = Arduboy2Base::sBuffer;
+    pages = h;
     
 #if ARDUINO_ARCH_AVR
     asm volatile(R"ASM(
@@ -204,11 +226,16 @@ void SpritesU::drawBasicNoChecks(
             lsl  %[shift_coef]
             sbrc %A[y], 2
             swap %[shift_coef]
+            ser  %A[shift_mask]
+            ser  %B[shift_mask]
+            sbrc %[mode], 2
+            rjmp 1f
             ldi  %[buf_adv], 0xff
             mul  %[buf_adv], %[shift_coef]
             movw %A[shift_mask], r0
             com  %A[shift_mask]
             com  %B[shift_mask]
+        1:
             
             asr  %B[y]
             ror  %A[y]
@@ -313,7 +340,10 @@ void SpritesU::drawBasicNoChecks(
 
     // precompute vertical shift coef and mask
     shift_coef = SpritesU_bitShiftLeftUInt8(y);
-    shift_mask = ~(0xff * shift_coef);
+    if(mode & 4)
+        shift_mask = 0xffff;
+    else
+        shift_mask = ~(0xff * shift_coef);
 
     // y /= 8 (round to -inf)
     y >>= 3;
@@ -363,10 +393,7 @@ void SpritesU::drawBasicNoChecks(
     if(mode & 1) image_adv *= 2;
 #endif
 
-    uint16_t image_data;
-    uint16_t mask_data;
-    uint8_t buf_data;
-    uint8_t count;
+    }
 
 #ifdef SPRITESU_OVERWRITE
     if(mode == MODE_OVERWRITE)
@@ -375,7 +402,7 @@ void SpritesU::drawBasicNoChecks(
 #if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
-                cp %[page_start], __zero_reg__
+                cp  %[page_start], __zero_reg__
                 brge L%=_middle
 
                 ; advance buf to next page
@@ -503,7 +530,7 @@ void SpritesU::drawBasicNoChecks(
 #if ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
-                cp %[page_start], __zero_reg__
+                cp  %[page_start], __zero_reg__
                 brge L%=_middle
 
                 ; advance buf to next page
@@ -646,7 +673,7 @@ void SpritesU::drawBasicNoChecks(
 #endif
 #ifdef SPRITESU_FX
     {
-        uint8_t sfc_read;
+        uint8_t sfc_read = SFC_READ;
         uint8_t* bufn;
         uint8_t reseek;
 #if ARDUINO_ARCH_AVR
@@ -662,7 +689,6 @@ void SpritesU::drawBasicNoChecks(
 
                 ; seek subroutine
                 cbi %[fxport], %[fxbit]
-                ldi %[sfc_read], %[SFC_READ]
                 out %[spdr], %[sfc_read]
                 add %A[image], %A[image_adv] ;  1
                 adc %B[image], %B[image_adv] ;  1
@@ -910,8 +936,7 @@ void SpritesU::drawBasicNoChecks(
             [count]      "=&r" (count),
             [buf_data]   "=&r" (buf_data),
             [image_data] "=&r" (image_data),
-            [reseek]     "=&r" (reseek),
-            [sfc_read]   "=&d" (sfc_read)
+            [reseek]     "=&r" (reseek)
             :
             [cols]       "r"   (cols),
             [w]          "r"   (w),
@@ -922,7 +947,7 @@ void SpritesU::drawBasicNoChecks(
             [bottom]     "r"   (bottom),
             [page_start] "r"   (page_start),
             [mode]       "r"   (mode),
-            [SFC_READ]   "I"   (SFC_READ),
+            [sfc_read]   "r"   (sfc_read),
             [fxport]     "I"   (_SFR_IO_ADDR(FX_PORT)),
             [fxbit]      "I"   (FX_BIT),
             [spdr]       "I"   (_SFR_IO_ADDR(SPDR)),
@@ -986,6 +1011,29 @@ void SpritesU::drawPlusMask(
 }
 #endif
 
+#if defined(SPRITESU_OVERWRITE) || defined(SPRITESU_PLUSMASK)
+void SpritesU::drawSelfMask(
+    int16_t x, int16_t y, uint8_t const* image, uint16_t frame)
+{
+    uint8_t w, h;
+#if ARDUINO_ARCH_AVR
+    asm volatile(
+        "lpm %[w], Z+\n"
+        "lpm %[h], Z+\n"
+        : [w] "=r" (w), [h] "=r" (h), [image] "+z" (image));
+#else
+    w = pgm_read_byte(image++);
+    h = pgm_read_byte(image++);
+#endif
+    drawBasic(x, y, w, h, (uint24_t)image, frame, MODE_SELFMASK);
+}
+void SpritesU::drawSelfMask(
+    int16_t x, int16_t y, uint8_t w, uint8_t h, uint8_t const* image)
+{
+    drawBasic(x, y, w, h, (uint24_t)image, 0, MODE_SELFMASK);
+}
+#endif
+
 #ifdef SPRITESU_FX
 void SpritesU::drawOverwriteFX(
     int16_t x, int16_t y, uint24_t image, uint16_t frame)
@@ -1012,6 +1060,19 @@ void SpritesU::drawPlusMaskFX(
     int16_t x, int16_t y, uint8_t w, uint8_t h, uint24_t image, uint16_t frame)
 {
     drawBasic(x, y, w, h, image + 2, frame, MODE_PLUSMASKFX);
+}
+void SpritesU::drawSelfMaskFX(
+    int16_t x, int16_t y, uint24_t image, uint16_t frame)
+{
+    FX::seekData(image);
+    uint8_t w = FX::readPendingUInt8();
+    uint8_t h = FX::readEnd();
+    drawBasic(x, y, w, h, image + 2, frame, MODE_SELFMASKFX);
+}
+void SpritesU::drawSelfMaskFX(
+    int16_t x, int16_t y, uint8_t w, uint8_t h, uint24_t image, uint16_t frame)
+{
+    drawBasic(x, y, w, h, image + 2, frame, MODE_SELFMASKFX);
 }
 #endif
 
