@@ -314,7 +314,7 @@ void SpritesU::drawBasicNoChecks(
         :
         [pages]      "+&r" (pages),
         [shift_coef] "=&d" (shift_coef),
-        [shift_mask] "=&r" (shift_mask),
+        [shift_mask] "=&d" (shift_mask),
         [page_start] "=&a" (page_start),
         [cols]       "=&r" (cols),
         [col_start]  "=&r" (col_start),
@@ -506,9 +506,9 @@ void SpritesU::drawBasicNoChecks(
             [pages]      "+&r" (pages),
             [count]      "=&r" (count),
             [buf_data]   "=&r" (buf_data),
+            [cols]       "+&r"  cols),
             [image_data] "=&r" (image_data)
             :
-            [cols]       "r"   (cols),
             [buf_adv]    "r"   (buf_adv),
             [image_adv]  "r"   (image_adv),
             [shift_mask] "r"   (shift_mask),
@@ -708,9 +708,9 @@ void SpritesU::drawBasicNoChecks(
             [count]      "=&r" (count),
             [buf_data]   "=&r" (buf_data),
             [image_data] "=&r" (image_data),
+            [cols]       "+&r" (cols),
             [mask_data]  "=&r" (mask_data)
             :
-            [cols]       "r"   (cols),
             [buf_adv]    "r"   (buf_adv),
             [image_adv]  "r"   (image_adv),
             [shift_coef] "r"   (shift_coef),
@@ -1049,9 +1049,9 @@ void SpritesU::drawBasicNoChecks(
             [count]      "=&r" (count),
             [buf_data]   "=&r" (buf_data),
             [image_data] "=&r" (image_data),
+            [cols]       "+&r" (cols),
             [reseek]     "=&r" (reseek)
             :
-            [cols]       "r"   (cols),
             [w]          "r"   (w),
             [buf_adv]    "r"   (buf_adv),
             [image_adv]  "r"   (image_adv),
@@ -1071,7 +1071,136 @@ void SpritesU::drawBasicNoChecks(
             "memory"
             );
 #else
-        // TODO: C implementation
+        reseek = false;
+        FX::seekData(image);
+        
+        if(page_start < 0)
+        {
+            // top
+            buf += 128;
+            count = cols;
+            if(!(mode & 1))
+            {
+                do
+                {
+                    image_data = FX::readPendingUInt8();
+                    image_data = (uint8_t)image_data * shift_coef;
+                    buf_data = *buf;
+                    buf_data &= uint8_t(shift_mask >> 8);
+                    buf_data |= uint8_t(image_data >> 8);
+                    *buf++ = buf_data;
+                } while(--count != 0);
+            }
+            else
+            {
+                do
+                {
+                    image_data = FX::readPendingUInt8();
+                    image_data = (uint8_t)image_data * shift_coef;
+                    shift_mask = FX::readPendingUInt8();
+                    shift_mask = (uint8_t)shift_mask * shift_coef;
+                    buf_data = *buf;
+                    buf_data &= ~uint8_t(shift_mask >> 8);
+                    buf_data |= uint8_t(image_data >> 8);
+                    *buf++ = buf_data;
+                } while(--count != 0);
+            }
+            --pages;
+            buf -= cols;
+            reseek = (w != cols);
+        }
+        
+        if(pages != 0)
+        {
+        
+            do
+            {
+                if(reseek)
+                {
+                    (void)FX::readEnd();
+                    image += image_adv;
+                    FX::seekData(image);
+                }
+                reseek = (w != cols);
+                
+                bufn = buf + 128;
+                count = cols;
+                if(!(mode & 1))
+                {
+                    do
+                    {
+                        image_data = FX::readPendingUInt8();
+                        image_data = (uint8_t)image_data * shift_coef;
+                        buf_data = *buf;
+                        buf_data &= uint8_t(shift_mask >> 0);
+                        buf_data |= uint8_t(image_data >> 0);
+                        *buf++ = buf_data;
+                        buf_data = *bufn;
+                        buf_data &= uint8_t(shift_mask >> 8);
+                        buf_data |= uint8_t(image_data >> 8);
+                        *bufn++ = buf_data;
+                    } while(--count != 0);
+                }
+                else
+                {
+                    do
+                    {
+                        image_data = FX::readPendingUInt8();
+                        image_data = (uint8_t)image_data * shift_coef;
+                        shift_mask = FX::readPendingUInt8();
+                        shift_mask = (uint8_t)shift_mask * shift_coef;
+                        buf_data = *buf;
+                        buf_data &= ~uint8_t(shift_mask >> 0);
+                        buf_data |= uint8_t(image_data >> 0);
+                        *buf++ = buf_data;
+                        buf_data = *bufn;
+                        buf_data &= ~uint8_t(shift_mask >> 8);
+                        buf_data |= uint8_t(image_data >> 8);
+                        *bufn++ = buf_data;
+                    } while(--count != 0);
+                }
+                buf += buf_adv;
+            } while(--pages != 0);
+        }
+        
+        if(bottom)
+        {
+            if(reseek)
+            {
+                (void)FX::readEnd();
+                image += image_adv;
+                FX::seekData(image);
+            }
+            
+            if(!(mode & 1))
+            {
+                do
+                {
+                    image_data = FX::readPendingUInt8();
+                    image_data = (uint8_t)image_data * shift_coef;
+                    buf_data = *buf;
+                    buf_data &= uint8_t(shift_mask >> 0);
+                    buf_data |= uint8_t(image_data >> 0);
+                    *buf++ = buf_data;
+                } while(--cols != 0);
+            }
+            else
+            {
+                do
+                {
+                    image_data = FX::readPendingUInt8();
+                    image_data = (uint8_t)image_data * shift_coef;
+                    shift_mask = FX::readPendingUInt8();
+                    shift_mask = (uint8_t)shift_mask * shift_coef;
+                    buf_data = *buf;
+                    buf_data &= ~uint8_t(shift_mask >> 0);
+                    buf_data |= uint8_t(image_data >> 0);
+                    *buf++ = buf_data;
+                } while(--cols != 0);
+            }
+        }
+    
+        (void)FX::readEnd();
 #endif
     }
 #endif
