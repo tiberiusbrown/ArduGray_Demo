@@ -197,9 +197,9 @@ void SpritesU::drawBasicNoChecks(
     bool bottom;
     int8_t page_start;
     uint8_t w;
+    uint16_t mask_data;
 
     {
-    uint16_t mask_data;
     uint8_t h;
     uint8_t col_start;
     
@@ -331,7 +331,6 @@ void SpritesU::drawBasicNoChecks(
         );
     
 #else
-    page_start = int8_t(y);
     col_start = uint8_t(x);
     bottom = false;
     cols = w;
@@ -352,10 +351,10 @@ void SpritesU::drawBasicNoChecks(
     page_start = int8_t(y);
     if(page_start < -1)
     {
-        uint8_t tp = (-1 - page_start);
-        pages -= tp;
-        if(mode & 1) tp *= 2;
-        image += tp * w;
+        page_start = ~page_start;
+        pages -= page_start;
+        if(mode & 1) page_start <<= 1;
+        image += (uint8_t)page_start * w;
         page_start = -1;
     }
 
@@ -368,29 +367,31 @@ void SpritesU::drawBasicNoChecks(
         col_start = 0;
     }
 
-    buf += page_start * 128 + col_start;
+    // compute buffer start address
+    buf_adv = 128;
+    buf += page_start * buf_adv + col_start;
 
     // clip against right edge
-    {
-        uint8_t max_cols = 128 - col_start;
-        if(cols > max_cols)
-            cols = max_cols;
-    }
+    buf_adv -= col_start;
+    if(cols >= buf_adv)
+        cols = buf_adv;
 
     // clip against bottom edge
-    if(pages > uint8_t(7 - page_start))
+    buf_adv = 7;
+    buf_adv -= page_start;
+    if(buf_adv < pages)
     {
-        pages = 7 - page_start;
+        pages = buf_adv;
         bottom = true;
     }
-
-    buf_adv = 128 - cols;
+    buf_adv = 128;
+    buf_adv -= cols;
     image_adv = w;
-#ifdef SPRITESU_FX
     if(!(mode & 2))
-#endif
         image_adv -= cols;
-    if(mode & 1) image_adv *= 2;
+    if(mode & 1)
+        image_adv <<= 1;
+
 #endif
 
     }
@@ -518,7 +519,60 @@ void SpritesU::drawBasicNoChecks(
             "r28", "r29", "memory"
             );
 #else
-        // TODO: C implementation
+        if(page_start < 0)
+        {
+            buf += 128;
+            count = cols;
+            do
+            {
+                image_data = pgm_read_byte(image_ptr++);
+                uint16_t t = (uint8_t)image_data * shift_coef;
+                buf_data = *buf;
+                buf_data &= uint8_t(shift_mask >> 8);
+                buf_data |= uint8_t(t >> 8);
+                *buf++ = buf_data;
+            } while(--count != 0);
+            --pages;
+            buf -= cols;
+            image_ptr += image_adv;
+        }
+        if(pages != 0)
+        {
+            uint8_t* bufn = buf + 128;
+            do
+            {
+                count = cols;
+                do
+                {
+                    image_data = pgm_read_byte(image_ptr++);
+                    uint16_t t = (uint8_t)image_data * shift_coef;
+                    buf_data = *buf;
+                    buf_data &= uint8_t(shift_mask >> 0);
+                    buf_data |= uint8_t(t >> 0);
+                    *buf++ = buf_data;
+                    buf_data = *bufn;
+                    buf_data &= uint8_t(shift_mask >> 8);
+                    buf_data |= uint8_t(t >> 8);
+                    *bufn++ = buf_data;
+                } while(--count != 0);
+                buf += buf_adv;
+                bufn += buf_adv;
+                image_ptr += image_adv;
+            } while(--pages != 0);
+        }
+        if(bottom)
+        {
+            do
+            {
+                image_data = pgm_read_byte(image_ptr++);
+                uint16_t t = (uint8_t)image_data * shift_coef;
+                buf_data = *buf;
+                buf_data &= uint8_t(shift_mask >> 0);
+                buf_data |= uint8_t(t >> 0);
+                *buf++ = buf_data;
+            }
+            while(--cols != 0);
+        }
 #endif
     }
     else
@@ -666,7 +720,66 @@ void SpritesU::drawBasicNoChecks(
             "r28", "r29", "memory"
             );
 #else
-        // TODO: C implementation
+        if(page_start < 0)
+        {
+            buf += 128;
+            count = cols;
+            do
+            {
+                image_data = pgm_read_byte(image_ptr++);
+                mask_data = pgm_read_byte(image_ptr++);
+                image_data = (uint8_t)image_data * shift_coef;
+                mask_data = (uint8_t)mask_data * shift_coef;
+                buf_data = *buf;
+                buf_data &= ~uint8_t(mask_data >> 8);
+                buf_data |= uint8_t(image_data >> 8);
+                *buf++ = buf_data;
+            } while(--count != 0);
+            --pages;
+            buf -= cols;
+            image_ptr += image_adv;
+        }
+        if(pages != 0)
+        {
+            uint8_t* bufn = buf + 128;
+            do
+            {
+                count = cols;
+                do
+                {
+                    image_data = pgm_read_byte(image_ptr++);
+                    mask_data = pgm_read_byte(image_ptr++);
+                    image_data = (uint8_t)image_data * shift_coef;
+                    mask_data = (uint8_t)mask_data * shift_coef;
+                    buf_data = *buf;
+                    buf_data &= ~uint8_t(mask_data >> 0);
+                    buf_data |= uint8_t(image_data >> 0);
+                    *buf++ = buf_data;
+                    buf_data = *bufn;
+                    buf_data &= ~uint8_t(mask_data >> 8);
+                    buf_data |= uint8_t(image_data >> 8);
+                    *bufn++ = buf_data;
+                } while(--count != 0);
+                buf += buf_adv;
+                bufn += buf_adv;
+                image_ptr += image_adv;
+            } while(--pages != 0);
+        }
+        if(bottom)
+        {
+            do
+            {
+                image_data = pgm_read_byte(image_ptr++);
+                mask_data = pgm_read_byte(image_ptr++);
+                image_data = (uint8_t)image_data * shift_coef;
+                mask_data = (uint8_t)mask_data * shift_coef;
+                buf_data = *buf;
+                buf_data &= ~uint8_t(mask_data >> 0);
+                buf_data |= uint8_t(image_data >> 0);
+                *buf++ = buf_data;
+            }
+            while(--cols != 0);
+        }
 #endif
     }
     else
