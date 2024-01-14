@@ -112,7 +112,7 @@ void SpritesU::drawBasic(
     
     uint8_t oldh = h;    
     
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
 
     /*
               A1 A0
@@ -208,7 +208,7 @@ void SpritesU::drawBasicNoChecks(
     buf = Arduboy2Base::sBuffer;
     pages = h;
     
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(R"ASM(
             mov  %[col_start], %A[x]
             clr  %[bottom]
@@ -400,7 +400,7 @@ void SpritesU::drawBasicNoChecks(
     if(mode == MODE_OVERWRITE)
     {
         uint8_t const* image_ptr = (uint8_t const*)image;
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
                 cp  %[page_start], __zero_reg__
@@ -581,7 +581,7 @@ void SpritesU::drawBasicNoChecks(
     if(mode == MODE_PLUSMASK)
     {
         uint8_t const* image_ptr = (uint8_t const*)image;
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
                 cp  %[page_start], __zero_reg__
@@ -789,7 +789,7 @@ void SpritesU::drawBasicNoChecks(
         uint8_t sfc_read = SFC_READ;
         uint8_t* bufn;
         uint8_t reseek;
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
         asm volatile(R"ASM(
 
                 lds r0, %[page]+0            ; 2
@@ -1212,7 +1212,7 @@ void SpritesU::drawOverwrite(
     int16_t x, int16_t y, uint8_t const* image, uint16_t frame)
 {
     uint8_t w, h;
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(
         "lpm %[w], Z+\n"
         "lpm %[h], Z+\n"
@@ -1235,7 +1235,7 @@ void SpritesU::drawPlusMask(
     int16_t x, int16_t y, uint8_t const* image, uint16_t frame)
 {
     uint8_t w, h;
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(
         "lpm %[w], Z+\n"
         "lpm %[h], Z+\n"
@@ -1258,7 +1258,7 @@ void SpritesU::drawSelfMask(
     int16_t x, int16_t y, uint8_t const* image, uint16_t frame)
 {
     uint8_t w, h;
-#if ARDUINO_ARCH_AVR
+#ifdef ARDUINO_ARCH_AVR
     asm volatile(
         "lpm %[w], Z+\n"
         "lpm %[h], Z+\n"
@@ -1504,7 +1504,51 @@ void SpritesU::fillRect_i8(int8_t x, int8_t y, uint8_t w, uint8_t h, uint8_t col
         [bot]     "r"   (bot)
         );
 #else
-    // TODO: C implementation
+    if(rows == 0)
+    {
+        m1 |= m0;
+        c1 &= c0;
+    }
+    else
+    {
+        if(m0 != 0)
+        {
+            col = w;
+            do
+            {
+                uint8_t t = *buf;
+                t &= m0;
+                t |= c0;
+                *buf++ = t;
+            } while(--col != 0);
+            buf += buf_adv;
+        }
+        
+        if(--rows != 0)
+        {
+            do
+            {
+                col = w;
+                do
+                {
+                    *buf++ = color;
+                } while(--col != 0);
+                buf += buf_adv;
+            } while(--rows != 0);
+        }
+    }
+    
+    if(bot)
+    {
+        do
+        {
+            uint8_t t = *buf;
+            t &= m1;
+            t |= c1;
+            *buf++ = t;
+        } while(--w != 0);
+    }
+    
 #endif
 }
 #endif
