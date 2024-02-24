@@ -506,7 +506,7 @@ void SpritesU::drawBasicNoChecks(
             [pages]      "+&r" (pages),
             [count]      "=&r" (count),
             [buf_data]   "=&r" (buf_data),
-            [cols]       "+&r"  cols),
+            [cols]       "+&r" (cols),
             [image_data] "=&r" (image_data)
             :
             [buf_adv]    "r"   (buf_adv),
