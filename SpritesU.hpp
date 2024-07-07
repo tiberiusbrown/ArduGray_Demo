@@ -226,8 +226,9 @@ void SpritesU::drawBasicNoChecks(
             lsl  %[shift_coef]
             sbrc %A[y], 2
             swap %[shift_coef]
-            ser  %A[shift_mask]
-            ser  %B[shift_mask]
+            clr  %A[shift_mask]
+            com  %A[shift_mask]
+            mov  %B[shift_mask], %A[shift_mask]
             sbrc %[mode], 2
             rjmp 1f
             ldi  %[buf_adv], 0xff
@@ -314,7 +315,7 @@ void SpritesU::drawBasicNoChecks(
         :
         [pages]      "+&r" (pages),
         [shift_coef] "=&d" (shift_coef),
-        [shift_mask] "=&d" (shift_mask),
+        [shift_mask] "=&r" (shift_mask),
         [page_start] "=&a" (page_start),
         [cols]       "=&r" (cols),
         [col_start]  "=&r" (col_start),

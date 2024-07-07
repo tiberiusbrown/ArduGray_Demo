@@ -30,4 +30,9 @@ void render()
                 frame);
         }
     }
+    
+    SpritesU::fillRect_i8(0, 0, 10, 40, a.color(BLACK));
+    SpritesU::fillRect_i8(0, 10, 8, 8, a.color(DARK_GRAY));
+    SpritesU::fillRect_i8(0, 20, 8, 8, a.color(LIGHT_GRAY));
+    SpritesU::fillRect_i8(0, 30, 8, 8, a.color(WHITE));
 }
