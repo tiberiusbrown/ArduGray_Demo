@@ -29,6 +29,11 @@ Optional Configuration Macros (define before including ArduboyG.h):
         Convert both light gray and dark gray to gray
     - ABG_L3_CONVERT_DARKEN
         Convert light gray to gray and dark gray to black
+    
+    When using L3 or L4_Triplane, allow per-plane contrast adjustment,
+    which can improve contrast between different shades of gray but
+    usually makes the whole image darker.
+    - ABG_PLANE_CONTRAST
 
 Default Template Configuration:
     
@@ -169,6 +174,10 @@ Example Usage:
 #define ABG_L4_TRIPLANE_PLANE_LIMIT 3
 #endif
 
+#if defined(ABG_PLANE_CONTRAST)
+// nothing yet
+#endif
+
 #undef BLACK
 #undef WHITE
 constexpr uint8_t BLACK      = 0;
@@ -226,6 +235,8 @@ constexpr uint16_t timer_counter = F_CPU / 64 / ABG_REFRESH_HZ;
 constexpr uint16_t timer_counter = F_CPU / 256 / ABG_REFRESH_HZ;
 #endif
 extern uint8_t  contrast;
+extern uint8_t  plane_contrast_L4[3];
+extern uint8_t  plane_contrast_L3[2];
 extern uint8_t  update_counter;
 extern uint8_t  update_every_n;
 extern uint8_t  update_every_n_denom;
@@ -723,6 +734,27 @@ protected:
         uint16_t clearcfg = 1;
         {
             uint8_t p = current_plane;
+#if defined(ABG_PLANE_CONTRAST)
+            if(MODE == ABG_Mode::L3)
+            {
+                uint8_t contrast = plane_contrast_L3[0];
+                if(p & 1) contrast = plane_contrast_L3[1];
+                Arduboy2Base::LCDCommandMode();
+                Arduboy2Base::SPItransfer(0x81);
+                Arduboy2Base::SPItransfer(contrast);
+                Arduboy2Base::LCDDataMode();
+            }
+            if(MODE == ABG_Mode::L4_Triplane)
+            {
+                uint8_t contrast = plane_contrast_L4[0];
+                if(p & 1) contrast = plane_contrast_L4[1];
+                if(p & 2) contrast = plane_contrast_L4[2];
+                Arduboy2Base::LCDCommandMode();
+                Arduboy2Base::SPItransfer(0x81);
+                Arduboy2Base::SPItransfer(contrast);
+                Arduboy2Base::LCDDataMode();
+            }
+#endif
             p += 1;
             if(p >= num_planes(MODE)) p = 0;
             if(planeColor(p, clear) != 0)
@@ -1058,7 +1090,9 @@ uint8_t  current_plane;
 uint8_t volatile current_phase;
 #endif
 bool volatile needs_display;
-uint8_t contrast = ABG_CONTRAST_DEFAULT;
+uint8_t  contrast = ABG_CONTRAST_DEFAULT;
+uint8_t  plane_contrast_L4[3] = { 25, 85, 255 };
+uint8_t  plane_contrast_L3[2] = { 64, 255 };
 
 void send_cmds_(uint8_t const* d, uint8_t n)
 {

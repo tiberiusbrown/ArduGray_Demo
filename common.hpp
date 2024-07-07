@@ -2,6 +2,7 @@
 
 #define ABG_TIMER1
 #define ABG_SYNC_PARK_ROW
+#define ABG_PLANE_CONTRAST
 
 #include "ArduboyG.h"
 extern ArduboyGBase_Config<ABG_Mode::L4_Triplane> a;
